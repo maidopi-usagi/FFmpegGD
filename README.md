@@ -2,6 +2,15 @@
 
 Godot GDExtension video player backed by FFmpeg.
 
+## Platform Status
+
+| Platform | Backend | Status |
+| --- | --- | --- |
+| macOS arm64 | VideoToolbox + Metal | Supported. GPU decode with no CPU pixel readback; NV12->RGBA conversion runs on Metal. |
+| Windows x86_64 | D3D12VA | D3D12 supported. Vulkan lacks external memory suppport. |
+| Linux | TBD | Not shipped yet. |
+| Android / iOS / Web | TBD | Not shipped yet. |
+
 ## Build
 
 Use a system or user-provided FFmpeg development install. The build does not download FFmpeg automatically because FFmpeg's effective license depends on the way that FFmpeg binary was configured.
