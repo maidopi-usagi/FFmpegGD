@@ -15,3 +15,23 @@ void FFmpegPlayer::cleanup_videotoolbox_resources() {
 	metal_nv12_to_rgba_pipeline = nullptr;
 }
 #endif
+
+#if !defined(__linux__)
+bool FFmpegPlayer::init_vulkan_context() {
+	return false;
+}
+
+void FFmpegPlayer::copy_vulkan_image(AVFrame *src_frame) {
+}
+
+void FFmpegPlayer::cleanup_vulkan_resources() {
+	vk_command_pool = nullptr;
+	vk_command_buffer = nullptr;
+	vk_queue = nullptr;
+	vk_device = nullptr;
+	vk_phys_device = nullptr;
+	vk_instance = nullptr;
+	vk_queue_family_index = 0;
+	using_godot_vulkan_device = false;
+}
+#endif

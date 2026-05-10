@@ -102,6 +102,8 @@ elif env["platform"] == "ios":
 
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
+if env["platform"] != "linux":
+    sources = [source for source in sources if str(source) != "src/ffmpeg_player_vulkan.cpp"]
 if env["platform"] in ["macos", "ios"]:
     sources += Glob("src/*.mm")
 

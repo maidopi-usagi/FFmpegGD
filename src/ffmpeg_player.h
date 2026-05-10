@@ -20,7 +20,10 @@
 #if defined(_WIN32) || defined(WIN32)
 #define VK_USE_PLATFORM_WIN32_KHR
 #endif
+#if __has_include(<vulkan/vulkan.h>)
+#define FFMPEGGD_HAS_VULKAN_HEADERS 1
 #include <vulkan/vulkan.h>
+#endif
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -33,7 +36,10 @@ extern "C" {
 #define FFMPEGGD_HAS_VIDEOTOOLBOX 1
 #include <libavutil/hwcontext_videotoolbox.h>
 #endif
+#if defined(FFMPEGGD_HAS_VULKAN_HEADERS) && __has_include(<libavutil/hwcontext_vulkan.h>)
+#define FFMPEGGD_HAS_VULKAN 1
 #include <libavutil/hwcontext_vulkan.h>
+#endif
 #include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
@@ -66,13 +72,13 @@ private:
 	RenderingDevice *rd = nullptr;
 
 	// Vulkan resources
-	VkInstance vk_instance = VK_NULL_HANDLE;
-	VkPhysicalDevice vk_phys_device = VK_NULL_HANDLE;
-	VkDevice vk_device = VK_NULL_HANDLE;
-	VkQueue vk_queue = VK_NULL_HANDLE;
+	void *vk_instance = nullptr;
+	void *vk_phys_device = nullptr;
+	void *vk_device = nullptr;
+	void *vk_queue = nullptr;
 	uint32_t vk_queue_family_index = 0;
-	VkCommandPool vk_command_pool = VK_NULL_HANDLE;
-	VkCommandBuffer vk_command_buffer = VK_NULL_HANDLE;
+	void *vk_command_pool = nullptr;
+	void *vk_command_buffer = nullptr;
 	bool using_godot_vulkan_device = false;
 	bool using_godot_d3d12_device = false;
 	bool d3d12_copy_initialized = false;

@@ -54,8 +54,14 @@ target_sources(${LIBNAME}
     src/ffmpeg_player_d3d12.cpp
     src/ffmpeg_player.h
     src/ffmpeg_player_platform_stubs.cpp
-    src/ffmpeg_player_vulkan.cpp
 )
+
+if(UNIX AND NOT APPLE)
+    target_sources(${LIBNAME}
+        PRIVATE
+        src/ffmpeg_player_vulkan.cpp
+    )
+endif()
 
 if(APPLE)
     enable_language(OBJCXX)
