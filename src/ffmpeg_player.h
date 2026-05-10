@@ -133,7 +133,11 @@ private:
 	std::atomic<bool> resync_playback_on_next_frame = false;
 	std::atomic<uint64_t> playback_generation = 0;
 	double playback_time = 0.0;
+	double playback_speed = 1.0;
 	int audio_output_sample_rate = 48000;
+	int preferred_audio_stream_idx = -1;
+	String preferred_decode_backend = "auto";
+	String last_error_message;
 	bool debug_logging = false;
 	bool logged_audio_format = false;
 	bool is_planar_texture = false;
@@ -149,6 +153,8 @@ private:
 	double stats_decode_ms_accum = 0.0;
 	double stats_upload_ms_accum = 0.0;
 	int stats_frame_count = 0;
+	double last_video_fps = 0.0;
+	double last_avg_upload_ms = 0.0;
 
 	struct DecodedFrameData {
 		int width = 0;
@@ -224,6 +230,10 @@ public:
 	double get_duration() const;
 	double get_position() const;
 	bool has_audio() const;
+	int get_audio_stream_count() const;
+	int get_audio_stream_index() const;
+	String get_audio_stream_info(int index) const;
+	void set_audio_stream_index(int index);
 	int get_audio_mix_rate() const;
 	int get_queued_audio_frame_count() const;
 	PackedVector2Array pop_audio_frames(int max_frames);
@@ -239,6 +249,13 @@ public:
 	String get_video_pixel_format_name() const;
 	int64_t get_video_bitrate() const;
 	double get_video_frame_rate() const;
+	double get_playback_speed() const;
+	void set_playback_speed(double speed);
+	String get_decode_backend() const;
+	void set_decode_backend(const String &backend);
+	String get_last_error_message() const;
+	double get_last_video_fps() const;
+	double get_last_upload_ms() const;
 	int get_video_colorspace() const;
 	int get_video_color_range() const;
 	int get_video_color_transfer() const;

@@ -74,6 +74,10 @@ void FFmpegPlayer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_duration"), &FFmpegPlayer::get_duration);
 	ClassDB::bind_method(D_METHOD("get_position"), &FFmpegPlayer::get_position);
 	ClassDB::bind_method(D_METHOD("has_audio"), &FFmpegPlayer::has_audio);
+	ClassDB::bind_method(D_METHOD("get_audio_stream_count"), &FFmpegPlayer::get_audio_stream_count);
+	ClassDB::bind_method(D_METHOD("get_audio_stream_index"), &FFmpegPlayer::get_audio_stream_index);
+	ClassDB::bind_method(D_METHOD("get_audio_stream_info", "index"), &FFmpegPlayer::get_audio_stream_info);
+	ClassDB::bind_method(D_METHOD("set_audio_stream_index", "index"), &FFmpegPlayer::set_audio_stream_index);
 	ClassDB::bind_method(D_METHOD("get_audio_mix_rate"), &FFmpegPlayer::get_audio_mix_rate);
 	ClassDB::bind_method(D_METHOD("get_queued_audio_frame_count"), &FFmpegPlayer::get_queued_audio_frame_count);
 	ClassDB::bind_method(D_METHOD("pop_audio_frames", "max_frames"), &FFmpegPlayer::pop_audio_frames);
@@ -89,6 +93,13 @@ void FFmpegPlayer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_video_pixel_format_name"), &FFmpegPlayer::get_video_pixel_format_name);
 	ClassDB::bind_method(D_METHOD("get_video_bitrate"), &FFmpegPlayer::get_video_bitrate);
 	ClassDB::bind_method(D_METHOD("get_video_frame_rate"), &FFmpegPlayer::get_video_frame_rate);
+	ClassDB::bind_method(D_METHOD("get_playback_speed"), &FFmpegPlayer::get_playback_speed);
+	ClassDB::bind_method(D_METHOD("set_playback_speed", "speed"), &FFmpegPlayer::set_playback_speed);
+	ClassDB::bind_method(D_METHOD("get_decode_backend"), &FFmpegPlayer::get_decode_backend);
+	ClassDB::bind_method(D_METHOD("set_decode_backend", "backend"), &FFmpegPlayer::set_decode_backend);
+	ClassDB::bind_method(D_METHOD("get_last_error_message"), &FFmpegPlayer::get_last_error_message);
+	ClassDB::bind_method(D_METHOD("get_last_video_fps"), &FFmpegPlayer::get_last_video_fps);
+	ClassDB::bind_method(D_METHOD("get_last_upload_ms"), &FFmpegPlayer::get_last_upload_ms);
 	ClassDB::bind_method(D_METHOD("get_video_colorspace"), &FFmpegPlayer::get_video_colorspace);
 	ClassDB::bind_method(D_METHOD("get_video_color_range"), &FFmpegPlayer::get_video_color_range);
 	ClassDB::bind_method(D_METHOD("get_video_color_transfer"), &FFmpegPlayer::get_video_color_transfer);
@@ -145,6 +156,7 @@ void FFmpegPlayer::cleanup() {
 		hw_device_ctx = nullptr;
 	}
 	playing = false;
+	last_error_message = String();
 	discard_decoded_frames_before = -1.0;
 	discard_audio_frames_before = -1.0;
 	resync_playback_on_next_frame = false;
@@ -295,11 +307,13 @@ bool FFmpegPlayer::open_media() {
 
 	// Open input file
 	if (avformat_open_input(&fmt_ctx, file_path.utf8().get_data(), nullptr, nullptr) < 0) {
+		last_error_message = "Could not open source file.";
 		UtilityFunctions::print("Could not open source file.");
 		return false;
 	}
 
 	if (avformat_find_stream_info(fmt_ctx, nullptr) < 0) {
+		last_error_message = "Could not find stream information.";
 		UtilityFunctions::print("Could not find stream information.");
 		return false;
 	}
@@ -307,6 +321,7 @@ bool FFmpegPlayer::open_media() {
 	// Find video stream
 	video_stream_idx = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
 	if (video_stream_idx < 0) {
+		last_error_message = "Could not find video stream.";
 		UtilityFunctions::print("Could not find video stream.");
 		return false;
 	}
@@ -337,12 +352,26 @@ bool FFmpegPlayer::open_media() {
 		AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
 		AV_HWDEVICE_TYPE_NONE
 	};
+	const enum AVHWDeviceType hw_priority_software[] = {
+		AV_HWDEVICE_TYPE_NONE
+	};
+	const enum AVHWDeviceType hw_priority_only_d3d12[] = {
+		AV_HWDEVICE_TYPE_D3D12VA,
+		AV_HWDEVICE_TYPE_NONE
+	};
 	const enum AVHWDeviceType *hw_priority = rendering_driver == "d3d12" ? hw_priority_d3d12 : hw_priority_default;
 #if defined(__APPLE__)
 	if (rendering_driver == "metal") {
 		hw_priority = hw_priority_apple_metal;
 	}
 #endif
+	if (preferred_decode_backend == "software") {
+		hw_priority = hw_priority_software;
+	} else if (preferred_decode_backend == "videotoolbox") {
+		hw_priority = hw_priority_apple_metal;
+	} else if (preferred_decode_backend == "d3d12va") {
+		hw_priority = hw_priority_only_d3d12;
+	}
 	if (debug_logging) {
 		UtilityFunctions::print("Godot rendering driver: ", rendering_driver.is_empty() ? "unknown" : rendering_driver);
 	}
@@ -427,11 +456,12 @@ bool FFmpegPlayer::open_media() {
 		if (opened) break;
 	}
 
-	if (!opened) {
+	if (!opened && preferred_decode_backend != "d3d12va" && preferred_decode_backend != "videotoolbox") {
 		opened = try_open_decoder(AV_HWDEVICE_TYPE_NONE, AV_PIX_FMT_NONE);
 	}
 
 	if (!opened) {
+		last_error_message = "Failed to open codec with backend: " + preferred_decode_backend;
 		UtilityFunctions::print("Failed to open codec.");
 		return false;
 	}
@@ -446,7 +476,13 @@ bool FFmpegPlayer::open_media() {
 
 void FFmpegPlayer::open_audio_stream() {
 	const AVCodec *audio_decoder = nullptr;
-	audio_stream_idx = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_AUDIO, -1, video_stream_idx, &audio_decoder, 0);
+	audio_stream_idx = -1;
+	if (preferred_audio_stream_idx >= 0 && fmt_ctx && preferred_audio_stream_idx < (int)fmt_ctx->nb_streams && fmt_ctx->streams[preferred_audio_stream_idx]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+		audio_stream_idx = preferred_audio_stream_idx;
+		audio_decoder = avcodec_find_decoder(fmt_ctx->streams[audio_stream_idx]->codecpar->codec_id);
+	} else {
+		audio_stream_idx = av_find_best_stream(fmt_ctx, AVMEDIA_TYPE_AUDIO, -1, video_stream_idx, &audio_decoder, 0);
+	}
 	if (audio_stream_idx < 0 || !audio_decoder) {
 		UtilityFunctions::print("No audio stream found.");
 		return;
@@ -574,6 +610,8 @@ void FFmpegPlayer::seek(double seconds) {
 	stats_time_accum = 0.0;
 	stats_upload_ms_accum = 0.0;
 	stats_frame_count = 0;
+	last_video_fps = 0.0;
+	last_avg_upload_ms = 0.0;
 	{
 		std::lock_guard<std::mutex> lock(decoded_frame_mutex);
 		clear_decoded_frame(latest_decoded_frame);
@@ -603,6 +641,97 @@ double FFmpegPlayer::get_position() const {
 
 bool FFmpegPlayer::has_audio() const {
 	return audio_decoder_ctx != nullptr;
+}
+
+int FFmpegPlayer::get_audio_stream_count() const {
+	if (!fmt_ctx) {
+		return 0;
+	}
+	int count = 0;
+	for (unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
+		if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+			count++;
+		}
+	}
+	return count;
+}
+
+int FFmpegPlayer::get_audio_stream_index() const {
+	if (!fmt_ctx || audio_stream_idx < 0) {
+		return -1;
+	}
+	int index = 0;
+	for (unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
+		if (fmt_ctx->streams[i]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
+			continue;
+		}
+		if ((int)i == audio_stream_idx) {
+			return index;
+		}
+		index++;
+	}
+	return -1;
+}
+
+String FFmpegPlayer::get_audio_stream_info(int index) const {
+	if (!fmt_ctx || index < 0) {
+		return String();
+	}
+	int audio_index = 0;
+	for (unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
+		AVStream *stream = fmt_ctx->streams[i];
+		if (stream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
+			continue;
+		}
+		if (audio_index == index) {
+			const char *codec = avcodec_get_name(stream->codecpar->codec_id);
+			return "Audio " + String::num_int64(index + 1) + ": " + (codec ? String(codec) : String("unknown")) + ", " + String::num_int64(stream->codecpar->sample_rate) + " Hz, " + String::num_int64(stream->codecpar->ch_layout.nb_channels) + " ch";
+		}
+		audio_index++;
+	}
+	return String();
+}
+
+void FFmpegPlayer::set_audio_stream_index(int index) {
+	if (!fmt_ctx || index < 0) {
+		return;
+	}
+	int audio_index = 0;
+	int stream_index = -1;
+	for (unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
+		if (fmt_ctx->streams[i]->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
+			continue;
+		}
+		if (audio_index == index) {
+			stream_index = (int)i;
+			break;
+		}
+		audio_index++;
+	}
+	if (stream_index < 0 || stream_index == audio_stream_idx) {
+		return;
+	}
+	const bool should_resume = playing;
+	stop_decode_thread();
+	clear_audio_queue();
+	if (swr_ctx) {
+		swr_free(&swr_ctx);
+	}
+	if (audio_frame) {
+		av_frame_free(&audio_frame);
+	}
+	if (audio_pending_pkt) {
+		av_packet_free(&audio_pending_pkt);
+	}
+	if (audio_decoder_ctx) {
+		avcodec_free_context(&audio_decoder_ctx);
+	}
+	preferred_audio_stream_idx = stream_index;
+	open_audio_stream();
+	if (should_resume) {
+		playing = true;
+		start_decode_thread();
+	}
 }
 
 int FFmpegPlayer::get_audio_mix_rate() const {
@@ -718,6 +847,38 @@ double FFmpegPlayer::get_video_frame_rate() const {
 	return av_q2d(rate);
 }
 
+double FFmpegPlayer::get_playback_speed() const {
+	return playback_speed;
+}
+
+void FFmpegPlayer::set_playback_speed(double speed) {
+	playback_speed = CLAMP(speed, 0.25, 4.0);
+}
+
+String FFmpegPlayer::get_decode_backend() const {
+	return preferred_decode_backend;
+}
+
+void FFmpegPlayer::set_decode_backend(const String &backend) {
+	if (backend == "software" || backend == "videotoolbox" || backend == "d3d12va") {
+		preferred_decode_backend = backend;
+		return;
+	}
+	preferred_decode_backend = "auto";
+}
+
+String FFmpegPlayer::get_last_error_message() const {
+	return last_error_message;
+}
+
+double FFmpegPlayer::get_last_video_fps() const {
+	return last_video_fps;
+}
+
+double FFmpegPlayer::get_last_upload_ms() const {
+	return last_avg_upload_ms;
+}
+
 int FFmpegPlayer::get_video_colorspace() const {
 	return current_video_colorspace;
 }
@@ -739,7 +900,7 @@ void FFmpegPlayer::_process(double delta) {
 
 	const bool waiting_for_seek_frame = resync_playback_on_next_frame.load();
 	if (!waiting_for_seek_frame) {
-		playback_time += delta;
+		playback_time += delta * playback_speed;
 	}
 	const double duration = get_duration();
 	if (duration > 0.0 && playback_time >= duration) {
@@ -782,11 +943,15 @@ void FFmpegPlayer::_process(double delta) {
 		stats_frame_count++;
 	}
 
-	if (debug_logging && stats_time_accum >= 1.0) {
-		UtilityFunctions::print("Playback stats: frames=", decoded_frame_count,
-			", fps=", stats_frame_count / stats_time_accum,
-			", queued=", has_queued_frame,
-			", avg_upload_ms=", stats_frame_count > 0 ? stats_upload_ms_accum / stats_frame_count : 0.0);
+	if (stats_time_accum >= 1.0) {
+		last_video_fps = stats_frame_count / stats_time_accum;
+		last_avg_upload_ms = stats_frame_count > 0 ? stats_upload_ms_accum / stats_frame_count : 0.0;
+		if (debug_logging) {
+			UtilityFunctions::print("Playback stats: frames=", decoded_frame_count,
+				", fps=", last_video_fps,
+				", queued=", has_queued_frame,
+				", avg_upload_ms=", last_avg_upload_ms);
+		}
 		stats_time_accum = 0.0;
 		stats_upload_ms_accum = 0.0;
 		stats_frame_count = 0;

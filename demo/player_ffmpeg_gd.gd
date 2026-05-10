@@ -13,7 +13,16 @@ var time_label: Label
 var duration_label: Label
 var status_label: Label
 var stats_label: Label
+var error_label: Label
 var debug_check: CheckBox
+var speed_option: OptionButton
+var backend_option: OptionButton
+var audio_track_option: OptionButton
+var volume_slider: HSlider
+var mute_check: CheckBox
+var subtitle_button: Button
+var subtitle_dialog: FileDialog
+var subtitle_label: Label
 var audio_player: AudioStreamPlayer
 var audio_playback: AudioStreamGeneratorPlayback
 var audio_prebuffer_frames := 0
@@ -23,9 +32,11 @@ var was_playing_before_drag := false
 var last_preview_seek_msec := 0
 var media_loaded := false
 var current_file_path := ""
+var subtitles := []
 const PREVIEW_SEEK_INTERVAL_MSEC := 120
 const INITIAL_AUDIO_PREBUFFER_SECONDS := 0.20
 const SEEK_AUDIO_PREBUFFER_SECONDS := 0.03
+const SPEED_VALUES := [0.5, 1.0, 1.5, 2.0]
 
 func _ready():
 	player = FFmpegPlayer.new()
@@ -37,8 +48,10 @@ func _ready():
 	texture_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	add_child(texture_rect)
 	_create_drop_label()
+	_create_subtitle_label()
 	_create_controls()
 	_create_file_dialog()
+	_create_subtitle_dialog()
 	
 	shader_material = ShaderMaterial.new()
 	shader_material.shader = load("res://nv12_to_rgb.gdshader")
@@ -47,6 +60,7 @@ func _ready():
 
 func _process(delta):
 	_update_controls()
+	_update_subtitle()
 
 	_update_audio_output()
 	_update_video_texture()
@@ -65,7 +79,9 @@ func _create_audio_output():
 	_set_audio_prebuffer(INITIAL_AUDIO_PREBUFFER_SECONDS)
 	audio_player = AudioStreamPlayer.new()
 	audio_player.stream = stream
+	audio_player.pitch_scale = player.get_playback_speed()
 	add_child(audio_player)
+	_apply_audio_volume()
 
 func _create_drop_label():
 	drop_label = Label.new()
@@ -78,6 +94,24 @@ func _create_drop_label():
 	drop_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(drop_label)
 
+func _create_subtitle_label():
+	subtitle_label = Label.new()
+	subtitle_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	subtitle_label.offset_left = 96
+	subtitle_label.offset_right = -96
+	subtitle_label.offset_top = -220
+	subtitle_label.offset_bottom = -160
+	subtitle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	subtitle_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	subtitle_label.add_theme_font_size_override("font_size", 28)
+	subtitle_label.add_theme_color_override("font_shadow_color", Color.BLACK)
+	subtitle_label.add_theme_constant_override("shadow_offset_x", 2)
+	subtitle_label.add_theme_constant_override("shadow_offset_y", 2)
+	subtitle_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	subtitle_label.visible = false
+	add_child(subtitle_label)
+
 func _create_file_dialog():
 	file_dialog = FileDialog.new()
 	file_dialog.access = FileDialog.ACCESS_FILESYSTEM
@@ -86,12 +120,21 @@ func _create_file_dialog():
 	file_dialog.file_selected.connect(_load_media)
 	add_child(file_dialog)
 
+func _create_subtitle_dialog():
+	subtitle_dialog = FileDialog.new()
+	subtitle_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	subtitle_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	subtitle_dialog.title = "Open SRT subtitle"
+	subtitle_dialog.filters = PackedStringArray(["*.srt ; SubRip subtitles"])
+	subtitle_dialog.file_selected.connect(_load_subtitle_file)
+	add_child(subtitle_dialog)
+
 func _create_controls():
 	controls = PanelContainer.new()
 	controls.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	controls.offset_left = 16
 	controls.offset_right = -16
-	controls.offset_top = -124
+	controls.offset_top = -184
 	controls.offset_bottom = -12
 	add_child(controls)
 
@@ -146,6 +189,66 @@ func _create_controls():
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(status_label)
 
+	error_label = Label.new()
+	error_label.text = ""
+	error_label.clip_text = true
+	error_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.25))
+	error_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(error_label)
+
+	var tools_row = HBoxContainer.new()
+	tools_row.add_theme_constant_override("separation", 8)
+	column.add_child(tools_row)
+
+	var previous_frame_button = Button.new()
+	previous_frame_button.text = "< Frame"
+	previous_frame_button.pressed.connect(_step_frame.bind(-1))
+	tools_row.add_child(previous_frame_button)
+
+	var next_frame_button = Button.new()
+	next_frame_button.text = "Frame >"
+	next_frame_button.pressed.connect(_step_frame.bind(1))
+	tools_row.add_child(next_frame_button)
+
+	speed_option = OptionButton.new()
+	for speed in SPEED_VALUES:
+		speed_option.add_item("%sx" % speed)
+	speed_option.selected = 1
+	speed_option.item_selected.connect(_on_speed_selected)
+	tools_row.add_child(speed_option)
+
+	backend_option = OptionButton.new()
+	backend_option.add_item("Auto")
+	backend_option.add_item("Software")
+	backend_option.add_item("VideoToolbox")
+	backend_option.add_item("D3D12VA")
+	backend_option.item_selected.connect(_on_backend_selected)
+	tools_row.add_child(backend_option)
+
+	audio_track_option = OptionButton.new()
+	audio_track_option.add_item("Audio: auto")
+	audio_track_option.item_selected.connect(_on_audio_track_selected)
+	tools_row.add_child(audio_track_option)
+
+	subtitle_button = Button.new()
+	subtitle_button.text = "Subtitles"
+	subtitle_button.pressed.connect(_on_subtitle_button_pressed)
+	tools_row.add_child(subtitle_button)
+
+	mute_check = CheckBox.new()
+	mute_check.text = "Mute"
+	mute_check.toggled.connect(_on_mute_toggled)
+	tools_row.add_child(mute_check)
+
+	volume_slider = HSlider.new()
+	volume_slider.min_value = 0.0
+	volume_slider.max_value = 1.0
+	volume_slider.step = 0.01
+	volume_slider.value = 1.0
+	volume_slider.custom_minimum_size = Vector2(120, 0)
+	volume_slider.value_changed.connect(_on_volume_changed)
+	tools_row.add_child(volume_slider)
+
 	stats_label = Label.new()
 	stats_label.text = ""
 	stats_label.clip_text = true
@@ -165,6 +268,8 @@ func _update_controls():
 		progress_slider.max_value = duration
 		if not is_dragging:
 			progress_slider.value = clamp(position, 0.0, duration)
+	if error_label:
+		error_label.text = player.get_last_error_message()
 
 func _on_play_button_pressed():
 	if not media_loaded:
@@ -181,6 +286,64 @@ func _on_open_button_pressed():
 
 func _on_debug_toggled(enabled: bool):
 	player.set_debug_logging(enabled)
+
+func _on_speed_selected(index: int):
+	if index < 0 or index >= SPEED_VALUES.size():
+		return
+	var speed = SPEED_VALUES[index]
+	player.set_playback_speed(speed)
+	if audio_player:
+		audio_player.pitch_scale = speed
+
+func _on_backend_selected(index: int):
+	var backends = ["auto", "software", "videotoolbox", "d3d12va"]
+	if index < 0 or index >= backends.size():
+		return
+	player.set_decode_backend(backends[index])
+	if media_loaded and not current_file_path.is_empty():
+		_load_media(current_file_path)
+
+func _on_audio_track_selected(index: int):
+	if index <= 0:
+		return
+	player.set_audio_stream_index(index - 1)
+	_create_audio_output()
+	_set_audio_prebuffer(SEEK_AUDIO_PREBUFFER_SECONDS)
+	if media_loaded:
+		player.play()
+
+func _on_volume_changed(value: float):
+	_apply_audio_volume()
+
+func _on_mute_toggled(enabled: bool):
+	_apply_audio_volume()
+
+func _apply_audio_volume():
+	if not audio_player:
+		return
+	if mute_check and mute_check.button_pressed:
+		audio_player.volume_db = -80.0
+		return
+	var value = max(volume_slider.value if volume_slider else 1.0, 0.001)
+	audio_player.volume_db = linear_to_db(value)
+
+func _on_subtitle_button_pressed():
+	subtitle_dialog.popup_centered_ratio(0.8)
+
+func _step_frame(direction: int):
+	if not media_loaded:
+		return
+	var frame_rate = player.get_video_frame_rate()
+	var frame_time = 1.0 / frame_rate if frame_rate > 0.0 else 1.0 / 30.0
+	var was_playing = player.is_playing()
+	player.stop()
+	_stop_audio_output()
+	player.seek(player.get_position() + frame_time * direction)
+	player.play()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not was_playing:
+		player.stop()
 
 func _on_slider_drag_started():
 	if not media_loaded:
@@ -245,6 +408,22 @@ func _set_audio_prebuffer(seconds: float):
 	var mix_rate = player.get_audio_mix_rate() if player else 48000
 	audio_prebuffer_frames = max(512, int(mix_rate * seconds))
 
+func _refresh_audio_track_options():
+	if audio_track_option == null:
+		return
+	audio_track_option.clear()
+	var count = player.get_audio_stream_count()
+	if count <= 0:
+		audio_track_option.add_item("Audio: none")
+		audio_track_option.disabled = true
+		return
+	audio_track_option.disabled = false
+	audio_track_option.add_item("Audio: auto")
+	for i in range(count):
+		audio_track_option.add_item(player.get_audio_stream_info(i))
+	var selected_audio = player.get_audio_stream_index()
+	audio_track_option.selected = selected_audio + 1 if selected_audio >= 0 else 0
+
 func _on_files_dropped(files: PackedStringArray):
 	if files.is_empty():
 		return
@@ -268,10 +447,13 @@ func _load_media(path: String):
 	status_label.text = "Loading: " + path.get_file()
 	player.load_file(path)
 	_create_audio_output()
+	_refresh_audio_track_options()
+	_update_stats_label()
 	player.play()
 	if not player.is_playing():
 		media_loaded = false
 		status_label.text = "Failed to load: " + path.get_file()
+		error_label.text = player.get_last_error_message()
 		if drop_label:
 			drop_label.text = "Could not play this file\nDrop another file or use Open"
 			drop_label.visible = true
@@ -314,6 +496,55 @@ func _update_video_texture():
 		if is_planar and tex_v:
 			shader_material.set_shader_parameter("texture_v", tex_v)
 
+func _load_subtitle_file(path: String):
+	subtitles.clear()
+	var file = FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		error_label.text = "Could not open subtitle: " + path.get_file()
+		return
+	var content = file.get_as_text().replace("\r\n", "\n").replace("\r", "\n")
+	for block in content.split("\n\n", false):
+		var lines = block.split("\n", false)
+		if lines.size() < 2:
+			continue
+		var time_line_index = 0
+		if not lines[0].contains("-->"):
+			time_line_index = 1
+		if time_line_index >= lines.size() or not lines[time_line_index].contains("-->"):
+			continue
+		var parts = lines[time_line_index].split("-->", false)
+		if parts.size() != 2:
+			continue
+		var text_lines := []
+		for i in range(time_line_index + 1, lines.size()):
+			text_lines.append(lines[i])
+		subtitles.append({
+			"start": _parse_srt_time(parts[0].strip_edges()),
+			"end": _parse_srt_time(parts[1].strip_edges()),
+			"text": "\n".join(text_lines)
+		})
+	status_label.text = "Subtitles: " + path.get_file()
+
+func _parse_srt_time(value: String) -> float:
+	var main_parts = value.replace(",", ".").split(":", false)
+	if main_parts.size() != 3:
+		return 0.0
+	return float(main_parts[0]) * 3600.0 + float(main_parts[1]) * 60.0 + float(main_parts[2])
+
+func _update_subtitle():
+	if subtitle_label == null:
+		return
+	if subtitles.is_empty() or not media_loaded:
+		subtitle_label.visible = false
+		return
+	var position = player.get_position()
+	for subtitle in subtitles:
+		if position >= subtitle["start"] and position <= subtitle["end"]:
+			subtitle_label.text = subtitle["text"]
+			subtitle_label.visible = true
+			return
+	subtitle_label.visible = false
+
 func _format_time(seconds: float) -> String:
 	if seconds < 0.0 or is_nan(seconds) or is_inf(seconds):
 		seconds = 0.0
@@ -346,7 +577,8 @@ func _update_stats_label():
 		codec = "unknown"
 	var frame_rate = player.get_video_frame_rate()
 	var frame_rate_text = "%.2f fps" % frame_rate if frame_rate > 0.0 else "unknown"
-	stats_label.text = "码率: %s  |  格式: %s  |  解码器: %s  |  编码: %s  |  帧率: %s  |  分辨率: %s" % [bitrate, pixel_format, decoder, codec, frame_rate_text, resolution]
+	var upload_path = "GPU RGBA" if player.get_video_texture_rgba() else "YUV shader"
+	stats_label.text = "码率: %s  |  格式: %s  |  解码器: %s  |  编码: %s  |  帧率: %s  |  分辨率: %s  |  实时: %.1f fps / %.3f ms  |  路径: %s" % [bitrate, pixel_format, decoder, codec, frame_rate_text, resolution, player.get_last_video_fps(), player.get_last_upload_ms(), upload_path]
 
 func _format_bitrate(bits_per_second: int) -> String:
 	if bits_per_second <= 0:
