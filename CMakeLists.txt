@@ -5,8 +5,9 @@ cmake_minimum_required(VERSION 3.17)
 if(CMAKE_C_COMPILER)
 endif()
 
-set(LIBNAME "EXTENSION-NAME" CACHE STRING "The name of the library")
+set(LIBNAME "ffmpeg_gd" CACHE STRING "The name of the library")
 set(GODOT_PROJECT_DIR "demo" CACHE STRING "The directory of a Godot project folder")
+set(FFMPEG_ROOT "" CACHE PATH "Path to an FFmpeg installation with include/ and lib/ directories")
 
 # Make sure all the dependencies are satisfied
 find_package(Python3 3.4 REQUIRED)
@@ -36,10 +37,9 @@ get_target_property(GODOTCPP_SUFFIX godot::cpp GODOTCPP_SUFFIX)
 get_target_property(GODOTCPP_PLATFORM godot::cpp GODOTCPP_PLATFORM)
 
 # Now we can specify our own project which will inherit any global cmake properties or variables that have been defined.
-project(godot-cpp-template
+project(ffmpeg_gd
     VERSION 1.0
-    DESCRIPTION "This repository serves as a quickstart template for GDExtension development with Godot 4.0+."
-    HOMEPAGE_URL "https://github.com/enetheru/godot-cpp-template/tree/main"
+    DESCRIPTION "FFmpeg video playback GDExtension for Godot."
     LANGUAGES CXX
 )
 
@@ -49,9 +49,21 @@ target_sources(${LIBNAME}
     PRIVATE
     src/register_types.cpp
     src/register_types.h
-    src/example_class.cpp
-    src/example_class.h
+    src/ffmpeg_player_cpu.cpp
+    src/ffmpeg_player.cpp
+    src/ffmpeg_player_d3d12.cpp
+    src/ffmpeg_player.h
+    src/ffmpeg_player_platform_stubs.cpp
+    src/ffmpeg_player_vulkan.cpp
 )
+
+if(APPLE)
+    enable_language(OBJCXX)
+    target_sources(${LIBNAME}
+        PRIVATE
+        src/ffmpeg_player_videotoolbox.mm
+    )
+endif()
 
 # Fetch a list of the xml files to use for documentation and add to our target
 file(GLOB_RECURSE DOC_XML LIST_DIRECTORIES NO CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/doc_classes/*.xml")
@@ -64,6 +76,31 @@ if(DOC_XML)
 endif()
 
 target_link_libraries(${LIBNAME} PRIVATE godot-cpp)
+
+if(FFMPEG_ROOT)
+    target_include_directories(${LIBNAME} PRIVATE "${FFMPEG_ROOT}/include")
+    target_link_directories(${LIBNAME} PRIVATE "${FFMPEG_ROOT}/lib")
+    target_link_libraries(${LIBNAME} PRIVATE avcodec avformat avutil swscale swresample)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample)
+    target_link_libraries(${LIBNAME} PRIVATE PkgConfig::FFMPEG)
+endif()
+
+if(WIN32)
+    target_link_libraries(${LIBNAME} PRIVATE d3d12 d3dcompiler vulkan-1)
+elseif(APPLE)
+    target_link_libraries(${LIBNAME} PRIVATE
+        "-framework VideoToolbox"
+        "-framework CoreVideo"
+        "-framework CoreMedia"
+        "-framework Metal"
+        "-framework IOSurface"
+        "-framework Foundation"
+    )
+elseif(UNIX)
+    target_link_libraries(${LIBNAME} PRIVATE vulkan)
+endif()
 
 # Require at least C++17 for this target
 set_property(TARGET ${LIBNAME} PROPERTY CXX_STANDARD 17)

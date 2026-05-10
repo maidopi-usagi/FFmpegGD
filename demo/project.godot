@@ -10,6 +10,12 @@ config_version=5
 
 [application]
 
-config/name="godot cpp template"
-config/features=PackedStringArray("4.1", "Forward Plus")
+config/name="ffmpeg_gd"
+run/main_scene="uid://didpfqa11i68r"
+config/features=PackedStringArray("4.6", "Forward Plus")
+boot_splash/show_image=false
 config/icon="res://icon.svg"
+
+[dotnet]
+
+project/assembly_name="ffmpeg_gd"

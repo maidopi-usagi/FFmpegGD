@@ -3,6 +3,20 @@
 .godot/
 
 # Ignore library files but not the gdextension file
+bin/*
+!bin/android
+bin/android/*
+!bin/android/.gitkeep
+!bin/linux
+bin/linux/*
+!bin/linux/.gitkeep
+!bin/macos
+bin/macos/*
+!bin/macos/.gitkeep
+!bin/windows
+bin/windows/*
+!bin/windows/.gitkeep
+!bin/*.gdextension
 demo/bin/*
 !demo/bin/android
 demo/bin/android/*
@@ -32,6 +46,7 @@ compile_commands.json
 *.o
 *.os
 *.so
+*.dylib
 *.obj
 *.bc
 *.pyc
@@ -60,3 +75,6 @@ compile_commands.json
 # Cmake
 cmake-build*
 CMakeUserPresets.json
+.cache/
+thirdparty/
+*.dll

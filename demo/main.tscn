@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://didpfqa11i68r"]
+
+[ext_resource type="Script" uid="uid://c5adf4hwmio0i" path="res://player_ffmpeg_gd.gd" id="1_ig7tw"]
+
+[node name="Control" type="Control" unique_id=2023847197]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_ig7tw")

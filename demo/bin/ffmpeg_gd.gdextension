@@ -1,0 +1,63 @@
+[configuration]
+
+entry_symbol = "ffmpeg_gd_library_init"
+compatibility_minimum = "4.5"
+
+[libraries]
+; Relative paths ensure that our GDExtension can be placed anywhere in the project directory.
+macos.arm64.debug = "./macos/libffmpeg_gd.macos.template_debug.arm64.dylib"
+macos.debug = "./macos/libffmpeg_gd.macos.template_debug.dylib"
+macos.release = "./macos/libffmpeg_gd.macos.template_release.dylib"
+
+ios.arm64.debug = "./ios/libffmpeg_gd.ios.template_debug.arm64.dylib"
+ios.arm64.release = "./ios/libffmpeg_gd.ios.template_release.arm64.dylib"
+
+macos.single.debug = "./macos/libffmpeg_gd.macos.template_debug.dylib"
+macos.double.debug = "./macos/libffmpeg_gd.macos.template_debug.double.dylib"
+macos.single.release = "./macos/libffmpeg_gd.macos.template_release.dylib"
+macos.double.release = "./macos/libffmpeg_gd.macos.template_release.double.dylib"
+
+ios.arm64.single.debug = "./ios/libffmpeg_gd.ios.template_debug.arm64.dylib"
+ios.arm64.double.debug = "./ios/libffmpeg_gd.ios.template_debug.arm64.double.dylib"
+ios.arm64.single.release = "./ios/libffmpeg_gd.ios.template_release.arm64.dylib"
+ios.arm64.double.release = "./ios/libffmpeg_gd.ios.template_release.arm64.double.dylib"
+
+windows.x86_32.single.debug = "./windows/ffmpeg_gd.windows.template_debug.x86_32.dll"
+windows.x86_32.double.debug = "./windows/ffmpeg_gd.windows.template_debug.x86_32.double.dll"
+windows.x86_32.single.release = "./windows/ffmpeg_gd.windows.template_release.x86_32.dll"
+windows.x86_32.double.release = "./windows/ffmpeg_gd.windows.template_release.x86_32.double.dll"
+
+windows.x86_64.single.debug = "./windows/ffmpeg_gd.windows.template_debug.x86_64.dll"
+windows.x86_64.double.debug = "./windows/ffmpeg_gd.windows.template_debug.x86_64.double.dll"
+windows.x86_64.single.release = "./windows/ffmpeg_gd.windows.template_release.x86_64.dll"
+windows.x86_64.double.release = "./windows/ffmpeg_gd.windows.template_release.x86_64.double.dll"
+
+linux.x86_64.single.debug = "./linux/libffmpeg_gd.linux.template_debug.x86_64.so"
+linux.x86_64.double.debug = "./linux/libffmpeg_gd.linux.template_debug.x86_64.double.so"
+linux.x86_64.single.release = "./linux/libffmpeg_gd.linux.template_release.x86_64.so"
+linux.x86_64.double.release = "./linux/libffmpeg_gd.linux.template_release.x86_64.double.so"
+
+linux.arm64.single.debug = "./linux/libffmpeg_gd.linux.template_debug.arm64.so"
+linux.arm64.double.debug = "./linux/libffmpeg_gd.linux.template_debug.arm64.double.so"
+linux.arm64.single.release = "./linux/libffmpeg_gd.linux.template_release.arm64.so"
+linux.arm64.double.release = "./linux/libffmpeg_gd.linux.template_release.arm64.double.so"
+
+linux.rv64.single.debug = "./linux/libffmpeg_gd.linux.template_debug.rv64.so"
+linux.rv64.double.debug = "./linux/libffmpeg_gd.linux.template_debug.rv64.double.so"
+linux.rv64.single.release = "./linux/libffmpeg_gd.linux.template_release.rv64.so"
+linux.rv64.double.release = "./linux/libffmpeg_gd.linux.template_release.rv64.double.so"
+
+android.x86_64.single.debug = "./android/libffmpeg_gd.android.template_debug.x86_64.so"
+android.x86_64.double.debug = "./android/libffmpeg_gd.android.template_debug.x86_64.double.so"
+android.x86_64.single.release = "./android/libffmpeg_gd.android.template_release.x86_64.so"
+android.x86_64.double.release = "./android/libffmpeg_gd.android.template_release.x86_64.double.so"
+
+android.arm64.single.debug = "./android/libffmpeg_gd.android.template_debug.arm64.so"
+android.arm64.double.debug = "./android/libffmpeg_gd.android.template_debug.arm64.double.so"
+android.arm64.single.release = "./android/libffmpeg_gd.android.template_release.arm64.so"
+android.arm64.double.release = "./android/libffmpeg_gd.android.template_release.arm64.double.so"
+
+web.wasm32.single.debug = "./web/libffmpeg_gd.web.template_debug.wasm32.nothreads.wasm"
+web.wasm32.double.debug = "./web/libffmpeg_gd.web.template_debug.wasm32.double.nothreads.wasm"
+web.wasm32.single.release = "./web/libffmpeg_gd.web.template_release.wasm32.nothreads.wasm"
+web.wasm32.double.release = "./web/libffmpeg_gd.web.template_release.wasm32.double.nothreads.wasm"

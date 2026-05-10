@@ -1,56 +1,51 @@
-# godot-cpp template
-This repository serves as a quickstart template for GDExtension development with Godot 4.0+.
+# ffmpeg_gd
 
-## Contents
-* Preconfigured source files for C++ development of the GDExtension ([src/](./src/))
-* An empty Godot project in [demo/](./demo), to test the GDExtension
-* godot-cpp as a submodule (`godot-cpp/`)
-* GitHub Issues template ([.github/ISSUE_TEMPLATE.yml](./.github/ISSUE_TEMPLATE.yml))
-* GitHub CI/CD workflows to publish your library packages when creating a release ([.github/workflows/builds.yml](./.github/workflows/builds.yml))
-* An SConstruct file with various functions, such as boilerplate for [Adding documentation](https://docs.godotengine.org/en/stable/tutorials/scripting/cpp/gdextension_docs_system.html)
+Godot GDExtension video player backed by FFmpeg.
 
-## Usage - Template
+## Build
 
-To use this template, log in to GitHub and click the green "Use this template" button at the top of the repository page. This will let you create a copy of this repository with a clean git history.
-
-To get started with your new GDExtension, do the following:
-
-* clone your repository to your local computer
-* initialize the godot-cpp git submodule via `git submodule update --init`
-* change the name of the compiled library file inside the [SConstruct](./SConstruct) file by modifying the `libname` string.
-  * change the paths of the to be loaded library name inside the [demo/bin/example.gdextension](./demo/bin/example.gdextension) file, by replacing `EXTENSION-NAME` with the name you chose for `libname`.
-* change the `entry_symbol` string inside [demo/bin/example.gdextension](./demo/bin/example.gdextension) file.
-  * rename the `example_library_init` function in [src/register_types.cpp](./src/register_types.cpp) to the same name you chose for `entry_symbol`.
-* change the name of the `demo/bin/example.gdextension` file
-
-Now, you can build the project with the following command:
+Use a system or user-provided FFmpeg development install. The build does not download FFmpeg automatically because FFmpeg's effective license depends on the way that FFmpeg binary was configured.
 
 ```shell
-scons
+scons platform=macos target=template_debug arch=arm64 ffmpeg_path="/opt/homebrew/opt/ffmpeg"
 ```
 
-If the build command worked, you can test it with the [demo](./demo) project. Import it into Godot, open it, and launch the main scene. You should see it print the following line in the console:
+If `ffmpeg_path` is omitted, SCons tries `pkg-config`:
 
-```
-Type: 24
-```
-
-### Configuring an IDE
-You can develop your own extension with any text editor and by invoking scons on the command line, but if you want to work with an IDE (Integrated Development Environment), you can use a compilation database file called `compile_commands.json`. Most IDEs should automatically identify this file, and self-configure appropriately.
-To generate the database file, you can run one of the following commands in the project root directory:
 ```shell
-# Generate compile_commands.json while compiling
-scons compiledb=yes
-
-# Generate compile_commands.json without compiling
-scons compiledb=yes compile_commands.json
+scons platform=linux target=template_debug
 ```
 
-## Usage - Actions
+`ffmpeg_path` must point at a directory containing `include/` and `lib/`.
 
-This repository comes with continuous integration (CI) through a GitHub action that tests building the GDExtension.
-It triggers automatically for each pushed change. You can find and edit it in [builds.yml](.github/workflows/ci.yml).
+For CMake, use the equivalent `FFMPEG_ROOT` cache variable or omit it to use `pkg-config`:
 
-There is also a workflow ([make_build.yml](.github/workflows/make_build.yml)) that builds the GDExtension for all supported platforms that you can use to create releases.
-You can trigger this workflow manually from the `Actions` tab on GitHub.
-After it is complete, you can find the file `godot-cpp-template.zip` in the `Artifacts` section of the workflow run.
+```shell
+cmake -S . -B cmake-build -DFFMPEG_ROOT=/opt/homebrew/opt/ffmpeg
+```
+
+On Windows, FFmpeg runtime DLLs are not copied by default. To explicitly bundle them for a local demo/package:
+
+```shell
+scons platform=windows target=template_debug ffmpeg_path="C:/path/to/ffmpeg" ffmpeg_bundle_runtime=yes
+```
+
+Only enable runtime bundling after verifying the selected FFmpeg build's license and redistribution requirements.
+
+The extension config lives at `demo/bin/ffmpeg_gd.gdextension` and uses the `ffmpeg_gd_library_init` entry symbol.
+
+## Demo
+
+Open the `demo` project in Godot and run the main scene.
+
+The demo supports drag-and-drop playback and an `Open` button. Enable the `Debug` checkbox to print FFmpeg/player diagnostics.
+
+## License
+
+This project's own source code is licensed under the MIT License. See `LICENSE.md`.
+
+## FFmpeg License Notes
+
+This project links to FFmpeg libraries but does not vendor FFmpeg binaries. The MIT License covers this project only; FFmpeg remains under the license terms of the exact FFmpeg build you use. For the lowest redistribution friction, use dynamically linked LGPL FFmpeg builds and avoid GPL/nonfree FFmpeg configurations unless you are prepared to satisfy those license terms for your distribution.
+
+When distributing a package that includes FFmpeg shared libraries, include the applicable FFmpeg license notices and source/offer requirements for the exact FFmpeg build you ship. This is a project policy note, not legal advice.
