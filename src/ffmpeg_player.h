@@ -41,6 +41,7 @@ extern "C" {
 #include <libavutil/hwcontext_vulkan.h>
 #endif
 #include <libavutil/imgutils.h>
+#include <libavutil/mastering_display_metadata.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
@@ -141,6 +142,8 @@ private:
 	bool logged_videotoolbox_frame_resource = false;
 	int current_video_colorspace = AVCOL_SPC_UNSPECIFIED;
 	int current_video_color_range = AVCOL_RANGE_UNSPECIFIED;
+	int current_video_color_transfer = AVCOL_TRC_UNSPECIFIED;
+	float current_hdr_source_peak_nits = 0.0f;
 	std::atomic<int64_t> decoded_frame_count = 0;
 	double stats_time_accum = 0.0;
 	double stats_decode_ms_accum = 0.0;
@@ -157,6 +160,8 @@ private:
 		AVFrame *hw_frame = nullptr;
 		int colorspace = AVCOL_SPC_UNSPECIFIED;
 		int color_range = AVCOL_RANGE_UNSPECIFIED;
+		int color_transfer = AVCOL_TRC_UNSPECIFIED;
+		float hdr_source_peak_nits = 0.0f;
 		uint64_t generation = 0;
 		bool valid = false;
 	};
@@ -228,6 +233,14 @@ public:
 	Ref<Texture2DRD> get_video_texture_rgba() const;
 	Vector2i get_video_size() const;
 	bool is_yuv420p() const;
+	String get_video_codec_name() const;
+	String get_video_decoder_name() const;
+	String get_video_decoder_backend_name() const;
+	String get_video_pixel_format_name() const;
+	int64_t get_video_bitrate() const;
+	double get_video_frame_rate() const;
 	int get_video_colorspace() const;
 	int get_video_color_range() const;
+	int get_video_color_transfer() const;
+	float get_video_hdr_source_peak_nits() const;
 };

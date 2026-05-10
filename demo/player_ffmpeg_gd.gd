@@ -12,6 +12,7 @@ var progress_slider: HSlider
 var time_label: Label
 var duration_label: Label
 var status_label: Label
+var stats_label: Label
 var debug_check: CheckBox
 var audio_player: AudioStreamPlayer
 var audio_playback: AudioStreamGeneratorPlayback
@@ -88,7 +89,7 @@ func _create_controls():
 	controls.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	controls.offset_left = 16
 	controls.offset_right = -16
-	controls.offset_top = -96
+	controls.offset_top = -124
 	controls.offset_bottom = -12
 	add_child(controls)
 
@@ -143,6 +144,12 @@ func _create_controls():
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(status_label)
 
+	stats_label = Label.new()
+	stats_label.text = ""
+	stats_label.clip_text = true
+	stats_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(stats_label)
+
 func _update_controls():
 	var duration = player.get_duration()
 	var position = player.get_position()
@@ -151,6 +158,7 @@ func _update_controls():
 	progress_slider.editable = media_loaded and duration > 0.0
 	time_label.text = _format_time(position)
 	duration_label.text = _format_time(duration)
+	_update_stats_label()
 	if duration > 0.0:
 		progress_slider.max_value = duration
 		if not is_dragging:
@@ -263,6 +271,7 @@ func _load_media(path: String):
 	if drop_label:
 		drop_label.visible = false
 	status_label.text = "Playing: " + path.get_file()
+	_update_stats_label()
 
 func _update_video_texture():
 	var tex_rgba = player.get_video_texture_rgba()
@@ -292,6 +301,8 @@ func _update_video_texture():
 		shader_material.set_shader_parameter("is_nv21", false)
 		shader_material.set_shader_parameter("limited_range", player.get_video_color_range() != 2)
 		shader_material.set_shader_parameter("yuv_matrix", player.get_video_colorspace())
+		shader_material.set_shader_parameter("color_transfer", player.get_video_color_transfer())
+		shader_material.set_shader_parameter("hdr_source_peak_nits", player.get_video_hdr_source_peak_nits())
 		if is_planar and tex_v:
 			shader_material.set_shader_parameter("texture_v", tex_v)
 
@@ -302,3 +313,36 @@ func _format_time(seconds: float) -> String:
 	var minutes = int(total / 60)
 	var secs = total % 60
 	return "%02d:%02d" % [minutes, secs]
+
+func _update_stats_label():
+	if stats_label == null:
+		return
+	if not media_loaded:
+		stats_label.text = ""
+		return
+	var size = player.get_video_size()
+	var resolution = "%dx%d" % [size.x, size.y] if size.x > 0 and size.y > 0 else "unknown"
+	var bitrate = _format_bitrate(player.get_video_bitrate())
+	var pixel_format = player.get_video_pixel_format_name()
+	if pixel_format.is_empty():
+		pixel_format = "unknown"
+	var decoder = player.get_video_decoder_name()
+	if decoder.is_empty():
+		decoder = "unknown"
+	var decoder_backend = player.get_video_decoder_backend_name()
+	if decoder_backend.is_empty():
+		decoder_backend = "unknown"
+	decoder = "%s (%s)" % [decoder, decoder_backend]
+	var codec = player.get_video_codec_name()
+	if codec.is_empty():
+		codec = "unknown"
+	var frame_rate = player.get_video_frame_rate()
+	var frame_rate_text = "%.2f fps" % frame_rate if frame_rate > 0.0 else "unknown"
+	stats_label.text = "码率: %s  |  格式: %s  |  解码器: %s  |  编码: %s  |  帧率: %s  |  分辨率: %s" % [bitrate, pixel_format, decoder, codec, frame_rate_text, resolution]
+
+func _format_bitrate(bits_per_second: int) -> String:
+	if bits_per_second <= 0:
+		return "unknown"
+	if bits_per_second >= 1000000:
+		return "%.2f Mbps" % (float(bits_per_second) / 1000000.0)
+	return "%.0f kbps" % (float(bits_per_second) / 1000.0)

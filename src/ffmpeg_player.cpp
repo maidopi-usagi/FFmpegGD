@@ -8,6 +8,44 @@
 #include <cstring>
 #include <cmath>
 
+namespace {
+
+double rational_to_double(const AVRational &value) {
+	return value.den != 0 ? (double)value.num / (double)value.den : 0.0;
+}
+
+float get_frame_hdr_source_peak_nits(const AVFrame *frame) {
+	if (!frame) {
+		return 0.0f;
+	}
+
+	const AVFrameSideData *content_light_data = av_frame_get_side_data(frame, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
+	if (content_light_data && content_light_data->data) {
+		const AVContentLightMetadata *content_light = reinterpret_cast<const AVContentLightMetadata *>(content_light_data->data);
+		if (content_light->MaxCLL > 0) {
+			return (float)content_light->MaxCLL;
+		}
+	}
+
+	const AVFrameSideData *mastering_data = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+	if (mastering_data && mastering_data->data) {
+		const AVMasteringDisplayMetadata *mastering = reinterpret_cast<const AVMasteringDisplayMetadata *>(mastering_data->data);
+		if (mastering->has_luminance) {
+			const double max_luminance = rational_to_double(mastering->max_luminance);
+			if (max_luminance > 0.0) {
+				return (float)max_luminance;
+			}
+		}
+	}
+
+	if (frame->color_trc == AVCOL_TRC_SMPTE2084 || frame->color_trc == AVCOL_TRC_ARIB_STD_B67) {
+		return 1000.0f;
+	}
+	return 0.0f;
+}
+
+} // namespace
+
 FFmpegPlayer::FFmpegPlayer() {
 	texture_y.instantiate();
 	texture_uv.instantiate();
@@ -45,8 +83,16 @@ void FFmpegPlayer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_video_texture_rgba"), &FFmpegPlayer::get_video_texture_rgba);
 	ClassDB::bind_method(D_METHOD("get_video_size"), &FFmpegPlayer::get_video_size);
 	ClassDB::bind_method(D_METHOD("is_yuv420p"), &FFmpegPlayer::is_yuv420p);
+	ClassDB::bind_method(D_METHOD("get_video_codec_name"), &FFmpegPlayer::get_video_codec_name);
+	ClassDB::bind_method(D_METHOD("get_video_decoder_name"), &FFmpegPlayer::get_video_decoder_name);
+	ClassDB::bind_method(D_METHOD("get_video_decoder_backend_name"), &FFmpegPlayer::get_video_decoder_backend_name);
+	ClassDB::bind_method(D_METHOD("get_video_pixel_format_name"), &FFmpegPlayer::get_video_pixel_format_name);
+	ClassDB::bind_method(D_METHOD("get_video_bitrate"), &FFmpegPlayer::get_video_bitrate);
+	ClassDB::bind_method(D_METHOD("get_video_frame_rate"), &FFmpegPlayer::get_video_frame_rate);
 	ClassDB::bind_method(D_METHOD("get_video_colorspace"), &FFmpegPlayer::get_video_colorspace);
 	ClassDB::bind_method(D_METHOD("get_video_color_range"), &FFmpegPlayer::get_video_color_range);
+	ClassDB::bind_method(D_METHOD("get_video_color_transfer"), &FFmpegPlayer::get_video_color_transfer);
+	ClassDB::bind_method(D_METHOD("get_video_hdr_source_peak_nits"), &FFmpegPlayer::get_video_hdr_source_peak_nits);
 }
 
 void FFmpegPlayer::cleanup() {
@@ -110,6 +156,8 @@ void FFmpegPlayer::cleanup() {
 	logged_videotoolbox_frame_resource = false;
 	current_video_colorspace = AVCOL_SPC_UNSPECIFIED;
 	current_video_color_range = AVCOL_RANGE_UNSPECIFIED;
+	current_video_color_transfer = AVCOL_TRC_UNSPECIFIED;
+	current_hdr_source_peak_nits = 0.0f;
 	decoded_frame_count = 0;
 	stats_time_accum = 0.0;
 	stats_decode_ms_accum = 0.0;
@@ -610,12 +658,80 @@ bool FFmpegPlayer::is_yuv420p() const {
 	return is_planar_texture;
 }
 
+String FFmpegPlayer::get_video_codec_name() const {
+	if (!video_stream || !video_stream->codecpar) {
+		return String();
+	}
+	const AVCodecDescriptor *descriptor = avcodec_descriptor_get(video_stream->codecpar->codec_id);
+	if (descriptor && descriptor->name) {
+		return String(descriptor->name);
+	}
+	const char *codec_name = avcodec_get_name(video_stream->codecpar->codec_id);
+	return codec_name ? String(codec_name) : String();
+}
+
+String FFmpegPlayer::get_video_decoder_name() const {
+	if (!decoder_ctx || !decoder_ctx->codec || !decoder_ctx->codec->name) {
+		return String();
+	}
+	return String(decoder_ctx->codec->name);
+}
+
+String FFmpegPlayer::get_video_decoder_backend_name() const {
+	if (!decoder_ctx) {
+		return String();
+	}
+	if (hw_device_type == AV_HWDEVICE_TYPE_NONE || hw_pix_fmt == AV_PIX_FMT_NONE) {
+		return "software";
+	}
+	const char *backend_name = av_hwdevice_get_type_name(hw_device_type);
+	return backend_name ? String(backend_name) : String();
+}
+
+String FFmpegPlayer::get_video_pixel_format_name() const {
+	if (!decoder_ctx) {
+		return String();
+	}
+	const AVPixelFormat format = decoder_ctx->sw_pix_fmt != AV_PIX_FMT_NONE ? decoder_ctx->sw_pix_fmt : decoder_ctx->pix_fmt;
+	const char *format_name = av_get_pix_fmt_name(format);
+	return format_name ? String(format_name) : String();
+}
+
+int64_t FFmpegPlayer::get_video_bitrate() const {
+	if (video_stream && video_stream->codecpar && video_stream->codecpar->bit_rate > 0) {
+		return video_stream->codecpar->bit_rate;
+	}
+	if (fmt_ctx && fmt_ctx->bit_rate > 0) {
+		return fmt_ctx->bit_rate;
+	}
+	return 0;
+}
+
+double FFmpegPlayer::get_video_frame_rate() const {
+	if (!video_stream) {
+		return 0.0;
+	}
+	AVRational rate = video_stream->avg_frame_rate.num > 0 && video_stream->avg_frame_rate.den > 0 ? video_stream->avg_frame_rate : video_stream->r_frame_rate;
+	if (rate.num <= 0 || rate.den <= 0) {
+		return 0.0;
+	}
+	return av_q2d(rate);
+}
+
 int FFmpegPlayer::get_video_colorspace() const {
 	return current_video_colorspace;
 }
 
 int FFmpegPlayer::get_video_color_range() const {
 	return current_video_color_range;
+}
+
+int FFmpegPlayer::get_video_color_transfer() const {
+	return current_video_color_transfer;
+}
+
+float FFmpegPlayer::get_video_hdr_source_peak_nits() const {
+	return current_hdr_source_peak_nits;
 }
 
 void FFmpegPlayer::_process(double delta) {
@@ -657,6 +773,8 @@ void FFmpegPlayer::_process(double delta) {
 		}
 		current_video_colorspace = frame_to_upload.colorspace;
 		current_video_color_range = frame_to_upload.color_range;
+		current_video_color_transfer = frame_to_upload.color_transfer;
+		current_hdr_source_peak_nits = frame_to_upload.hdr_source_peak_nits;
 		upload_frame(frame_to_upload);
 		clear_decoded_frame(frame_to_upload);
 		const auto upload_end = std::chrono::steady_clock::now();
@@ -862,6 +980,7 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 		if (ret == 0) {
 			// We have a frame
 			AVFrame *final_frame = frame;
+			const AVFrame *metadata_frame = frame;
 			const int64_t raw_pts = frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
 			double frame_pts_seconds = -1.0;
 			if (raw_pts != AV_NOPTS_VALUE) {
@@ -899,6 +1018,8 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 					out_frame.height = frame->height;
 					out_frame.colorspace = frame->colorspace;
 					out_frame.color_range = frame->color_range;
+					out_frame.color_transfer = frame->color_trc;
+					out_frame.hdr_source_peak_nits = get_frame_hdr_source_peak_nits(frame);
 					out_frame.pts_seconds = frame_pts_seconds;
 					out_frame.generation = frame_generation;
 					out_frame.hw_frame = av_frame_clone(frame);
@@ -919,6 +1040,8 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 					out_frame.height = frame->height;
 					out_frame.colorspace = frame->colorspace;
 					out_frame.color_range = frame->color_range;
+					out_frame.color_transfer = frame->color_trc;
+					out_frame.hdr_source_peak_nits = get_frame_hdr_source_peak_nits(frame);
 					out_frame.pts_seconds = frame_pts_seconds;
 					out_frame.generation = frame_generation;
 					out_frame.hw_frame = av_frame_clone(frame);
@@ -941,7 +1064,9 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 			int width = final_frame->width;
 			int height = final_frame->height;
 			const bool is_yuv420p_frame = final_frame->format == AV_PIX_FMT_YUV420P || final_frame->format == AV_PIX_FMT_YUVJ420P;
+			const bool is_yuv420p10_frame = final_frame->format == AV_PIX_FMT_YUV420P10LE;
 			const bool is_nv12_frame = final_frame->format == AV_PIX_FMT_NV12;
+			const bool is_p010_frame = final_frame->format == AV_PIX_FMT_P010LE;
 			if (debug_logging && !logged_frame_format) {
 				UtilityFunctions::print("Decoded frame format: ", av_get_pix_fmt_name((AVPixelFormat)final_frame->format),
 					", sw_pix_fmt: ", av_get_pix_fmt_name(decoder_ctx->sw_pix_fmt),
@@ -950,7 +1075,7 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 					", linesizes: ", final_frame->linesize[0], ", ", final_frame->linesize[1], ", ", final_frame->linesize[2]);
 				logged_frame_format = true;
 			}
-			if (!is_nv12_frame && !is_yuv420p_frame) {
+			if (!is_nv12_frame && !is_yuv420p_frame && !is_yuv420p10_frame && !is_p010_frame) {
 				UtilityFunctions::print("Unsupported decoded pixel format: ", av_get_pix_fmt_name((AVPixelFormat)final_frame->format));
 				av_frame_unref(frame);
 				if (final_frame == sw_frame) av_frame_unref(sw_frame);
@@ -960,8 +1085,10 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 			out_frame.width = width;
 			out_frame.height = height;
 			out_frame.generation = frame_generation;
-			out_frame.colorspace = final_frame->colorspace;
-			out_frame.color_range = final_frame->color_range;
+			out_frame.colorspace = metadata_frame->colorspace;
+			out_frame.color_range = metadata_frame->color_range;
+			out_frame.color_transfer = metadata_frame->color_trc;
+			out_frame.hdr_source_peak_nits = get_frame_hdr_source_peak_nits(metadata_frame);
 			const int64_t pts = final_frame->best_effort_timestamp != AV_NOPTS_VALUE ? final_frame->best_effort_timestamp : final_frame->pts;
 			if (pts != AV_NOPTS_VALUE) {
 				const int64_t start_time = video_stream->start_time != AV_NOPTS_VALUE ? video_stream->start_time : 0;
@@ -979,6 +1106,41 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 				for (int i = 0; i < height / 2; i++) {
 					memcpy(out_frame.u.data() + i * (width / 2), final_frame->data[1] + i * final_frame->linesize[1], width / 2);
 					memcpy(out_frame.v.data() + i * (width / 2), final_frame->data[2] + i * final_frame->linesize[2], width / 2);
+				}
+			} else if (is_yuv420p10_frame) {
+				for (int y = 0; y < height; y++) {
+					const uint16_t *src_y = reinterpret_cast<const uint16_t *>(final_frame->data[0] + y * final_frame->linesize[0]);
+					uint8_t *dst_y = out_frame.y.data() + y * width;
+					for (int x = 0; x < width; x++) {
+						dst_y[x] = (uint8_t)(src_y[x] >> 2);
+					}
+				}
+				for (int y = 0; y < height / 2; y++) {
+					const uint16_t *src_u = reinterpret_cast<const uint16_t *>(final_frame->data[1] + y * final_frame->linesize[1]);
+					const uint16_t *src_v = reinterpret_cast<const uint16_t *>(final_frame->data[2] + y * final_frame->linesize[2]);
+					uint8_t *dst_u = out_frame.u.data() + y * (width / 2);
+					uint8_t *dst_v = out_frame.v.data() + y * (width / 2);
+					for (int x = 0; x < width / 2; x++) {
+						dst_u[x] = (uint8_t)(src_u[x] >> 2);
+						dst_v[x] = (uint8_t)(src_v[x] >> 2);
+					}
+				}
+			} else if (is_p010_frame) {
+				for (int y = 0; y < height; y++) {
+					const uint16_t *src_y = reinterpret_cast<const uint16_t *>(final_frame->data[0] + y * final_frame->linesize[0]);
+					uint8_t *dst_y = out_frame.y.data() + y * width;
+					for (int x = 0; x < width; x++) {
+						dst_y[x] = (uint8_t)(src_y[x] >> 8);
+					}
+				}
+				for (int y = 0; y < height / 2; y++) {
+					const uint16_t *src_uv = reinterpret_cast<const uint16_t *>(final_frame->data[1] + y * final_frame->linesize[1]);
+					uint8_t *dst_u = out_frame.u.data() + y * (width / 2);
+					uint8_t *dst_v = out_frame.v.data() + y * (width / 2);
+					for (int x = 0; x < width / 2; x++) {
+						dst_u[x] = (uint8_t)(src_uv[x * 2] >> 8);
+						dst_v[x] = (uint8_t)(src_uv[x * 2 + 1] >> 8);
+					}
 				}
 			} else {
 				for (int y = 0; y < height / 2; y++) {

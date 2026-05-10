@@ -16,6 +16,8 @@ struct NV12ConversionParams {
 	uint32_t height;
 	int32_t full_range;
 	int32_t matrix;
+	int32_t transfer;
+	float source_peak_nits;
 };
 
 constexpr NSUInteger THREADGROUP_WIDTH = 16;
@@ -100,10 +102,14 @@ bool FFmpegPlayer::upload_videotoolbox_frame(AVFrame *src_frame) {
 	}
 
 	const OSType pixel_format = CVPixelBufferGetPixelFormatType(pixel_buffer);
-	if (pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange && pixel_format != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) {
+	const bool is_8bit_biplanar = pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+	const bool is_10bit_biplanar = pixel_format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange || pixel_format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+	if (!is_8bit_biplanar && !is_10bit_biplanar) {
 		UtilityFunctions::print("Unsupported VideoToolbox pixel format for zero-copy import: ", (uint64_t)pixel_format);
 		return false;
 	}
+	const MTLPixelFormat y_metal_format = is_10bit_biplanar ? MTLPixelFormatR16Unorm : MTLPixelFormatR8Unorm;
+	const MTLPixelFormat uv_metal_format = is_10bit_biplanar ? MTLPixelFormatRG16Unorm : MTLPixelFormatRG8Unorm;
 
 	const size_t y_width = CVPixelBufferGetWidthOfPlane(pixel_buffer, 0);
 	const size_t y_height = CVPixelBufferGetHeightOfPlane(pixel_buffer, 0);
@@ -128,7 +134,7 @@ bool FFmpegPlayer::upload_videotoolbox_frame(AVFrame *src_frame) {
 		(CVMetalTextureCacheRef)cv_metal_texture_cache,
 		pixel_buffer,
 		nullptr,
-		MTLPixelFormatR8Unorm,
+		y_metal_format,
 		y_width,
 		y_height,
 		0,
@@ -140,7 +146,7 @@ bool FFmpegPlayer::upload_videotoolbox_frame(AVFrame *src_frame) {
 		(CVMetalTextureCacheRef)cv_metal_texture_cache,
 		pixel_buffer,
 		nullptr,
-		MTLPixelFormatRG8Unorm,
+		uv_metal_format,
 		uv_width,
 		uv_height,
 		1,
@@ -215,7 +221,38 @@ bool FFmpegPlayer::upload_videotoolbox_frame(AVFrame *src_frame) {
 	if (!metal_nv12_to_rgba_pipeline) {
 		static NSString *shader_source = @"#include <metal_stdlib>\n"
 			"using namespace metal;\n"
-			"struct Params { uint width; uint height; int full_range; int matrix; };\n"
+			"struct Params { uint width; uint height; int full_range; int matrix; int transfer; float source_peak_nits; };\n"
+			"float3 pq_to_linear(float3 value) {\n"
+			"    const float m1 = 0.1593017578125;\n"
+			"    const float m2 = 78.84375;\n"
+			"    const float c1 = 0.8359375;\n"
+			"    const float c2 = 18.8515625;\n"
+			"    const float c3 = 18.6875;\n"
+			"    float3 v = pow(max(value, float3(0.0)), float3(1.0 / m2));\n"
+			"    return pow(max(v - c1, float3(0.0)) / max(c2 - c3 * v, float3(0.000001)), float3(1.0 / m1));\n"
+			"}\n"
+			"float3 hlg_to_linear(float3 value) {\n"
+			"    const float a = 0.17883277;\n"
+			"    const float b = 0.28466892;\n"
+			"    const float c = 0.55991073;\n"
+			"    float3 low = (value * value) / 3.0;\n"
+			"    float3 high = (exp((value - c) / a) + b) / 12.0;\n"
+			"    return select(low, high, value > float3(0.5));\n"
+			"}\n"
+			"float3 map_hdr_nits(float3 linear, float source_peak_nits) {\n"
+			"    const float target_peak_nits = 100.0;\n"
+			"    float peak = max(source_peak_nits, target_peak_nits);\n"
+			"    float shoulder = peak / target_peak_nits;\n"
+			"    float3 nits = linear * 10000.0;\n"
+			"    float3 x = nits / target_peak_nits;\n"
+			"    float3 mapped = x * (1.0 + x / (shoulder * shoulder)) / (1.0 + x);\n"
+			"    return pow(saturate(mapped), float3(1.0 / 2.2));\n"
+			"}\n"
+			"float3 tone_map(float3 rgb, int transfer, float source_peak_nits) {\n"
+			"    if (transfer == 16) return map_hdr_nits(pq_to_linear(saturate(rgb)), source_peak_nits);\n"
+			"    if (transfer == 18) return map_hdr_nits(hlg_to_linear(saturate(rgb)), source_peak_nits);\n"
+			"    return rgb;\n"
+			"}\n"
 			"kernel void nv12_to_rgba(texture2d<float, access::read> y_tex [[texture(0)]], texture2d<float, access::read> uv_tex [[texture(1)]], texture2d<float, access::write> out_tex [[texture(2)]], constant Params &params [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {\n"
 			"    if (gid.x >= params.width || gid.y >= params.height) return;\n"
 			"    float y = y_tex.read(gid).r;\n"
@@ -226,7 +263,7 @@ bool FFmpegPlayer::upload_videotoolbox_frame(AVFrame *src_frame) {
 			"    else { rv = 1.402; gu = -0.344136; gv = -0.714136; bu = 1.772; }\n"
 			"    float yy = params.full_range != 0 ? y : 1.16438356 * (y - 0.0625);\n"
 			"    float3 rgb = float3(yy + rv * uv.y, yy + gu * uv.x + gv * uv.y, yy + bu * uv.x);\n"
-			"    out_tex.write(float4(saturate(rgb), 1.0), gid);\n"
+			"    out_tex.write(float4(saturate(tone_map(rgb, params.transfer, params.source_peak_nits)), 1.0), gid);\n"
 			"}\n";
 		NSError *error = nil;
 		id<MTLLibrary> library = [metal_device newLibraryWithSource:shader_source options:nil error:&error];
@@ -258,7 +295,9 @@ bool FFmpegPlayer::upload_videotoolbox_frame(AVFrame *src_frame) {
 		(uint32_t)y_width,
 		(uint32_t)y_height,
 		src_frame->color_range == AVCOL_RANGE_JPEG ? 1 : 0,
-		(int32_t)src_frame->colorspace
+		(int32_t)src_frame->colorspace,
+		(int32_t)src_frame->color_trc,
+		current_hdr_source_peak_nits
 	};
 
 	id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];

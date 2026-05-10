@@ -12,6 +12,8 @@ uniform bool is_yuv420p = false; // true=YUV420P(三平面), false=NV12/NV21(双
 uniform bool is_nv21 = false;    // true=VU顺序, false=UV顺序 (仅在 !is_yuv420p 时有效)
 uniform bool limited_range = true; // true=视频标准(16-235), false=PC标准(0-255)
 uniform int yuv_matrix = 6; // FFmpeg AVColorSpace: 1=BT.709, 6=SMPTE170M/BT.601, 9=BT.2020
+uniform int color_transfer = 2; // FFmpeg AVColorTransferCharacteristic: 16=SMPTE2084/PQ, 18=HLG
+uniform float hdr_source_peak_nits = 0.0;
 
 vec3 yuv_to_rgb(float y, float u, float v) {
 	float r_v;
@@ -43,6 +45,45 @@ vec3 yuv_to_rgb(float y, float u, float v) {
 	return vec3(yy + r_v * v, yy + g_u * u + g_v * v, yy + b_u * u);
 }
 
+vec3 pq_to_linear(vec3 value) {
+	const float m1 = 0.1593017578125;
+	const float m2 = 78.84375;
+	const float c1 = 0.8359375;
+	const float c2 = 18.8515625;
+	const float c3 = 18.6875;
+	vec3 v = pow(max(value, vec3(0.0)), vec3(1.0 / m2));
+	return pow(max(v - vec3(c1), vec3(0.0)) / max(vec3(c2) - vec3(c3) * v, vec3(0.000001)), vec3(1.0 / m1));
+}
+
+vec3 hlg_to_linear(vec3 value) {
+	const float a = 0.17883277;
+	const float b = 0.28466892;
+	const float c = 0.55991073;
+	vec3 low = (value * value) / 3.0;
+	vec3 high = (exp((value - vec3(c)) / a) + vec3(b)) / 12.0;
+	return mix(low, high, step(vec3(0.5), value));
+}
+
+vec3 map_hdr_nits(vec3 linear) {
+	const float target_peak_nits = 100.0;
+	float peak = max(hdr_source_peak_nits, target_peak_nits);
+	float shoulder = peak / target_peak_nits;
+	vec3 nits = linear * 10000.0;
+	vec3 x = nits / target_peak_nits;
+	vec3 mapped = x * (1.0 + x / (shoulder * shoulder)) / (1.0 + x);
+	return pow(clamp(mapped, vec3(0.0), vec3(1.0)), vec3(1.0 / 2.2));
+}
+
+vec3 tone_map(vec3 rgb) {
+	if (color_transfer == 16) {
+		return map_hdr_nits(pq_to_linear(clamp(rgb, vec3(0.0), vec3(1.0))));
+	}
+	if (color_transfer == 18) {
+		return map_hdr_nits(hlg_to_linear(clamp(rgb, vec3(0.0), vec3(1.0))));
+	}
+	return rgb;
+}
+
 void fragment() {
 	float y = texture(texture_y, UV).r;
 	float u, v;
@@ -63,6 +104,6 @@ void fragment() {
 		}
 	}
 	
-	vec3 rgb = yuv_to_rgb(y, u, v);
+	vec3 rgb = tone_map(yuv_to_rgb(y, u, v));
 	COLOR = vec4(clamp(rgb, vec3(0.0), vec3(1.0)), 1.0);
 }
