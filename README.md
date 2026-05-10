@@ -1,6 +1,6 @@
 # ffmpeg_gd
 
-Godot GDExtension video player backed by FFmpeg.
+Godot GDExtension video player backed by FFmpeg, aims at high effciency hardware replay support for available plaforms without CPU rounding.
 
 ## Platform Status
 
