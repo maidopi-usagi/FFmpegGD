@@ -24,6 +24,8 @@ var last_preview_seek_msec := 0
 var media_loaded := false
 var current_file_path := ""
 const PREVIEW_SEEK_INTERVAL_MSEC := 120
+const INITIAL_AUDIO_PREBUFFER_SECONDS := 0.20
+const SEEK_AUDIO_PREBUFFER_SECONDS := 0.03
 
 func _ready():
 	player = FFmpegPlayer.new()
@@ -59,8 +61,8 @@ func _create_audio_output():
 	var stream = AudioStreamGenerator.new()
 	stream.mix_rate_mode = AudioStreamGenerator.MIX_RATE_CUSTOM
 	stream.mix_rate = player.get_audio_mix_rate()
-	stream.buffer_length = 1.0
-	audio_prebuffer_frames = int(stream.mix_rate * 0.5)
+	stream.buffer_length = 0.5
+	_set_audio_prebuffer(INITIAL_AUDIO_PREBUFFER_SECONDS)
 	audio_player = AudioStreamPlayer.new()
 	audio_player.stream = stream
 	add_child(audio_player)
@@ -195,6 +197,7 @@ func _on_slider_drag_ended(value_changed: bool):
 	if value_changed:
 		player.seek(progress_slider.value)
 		_stop_audio_output()
+		_set_audio_prebuffer(SEEK_AUDIO_PREBUFFER_SECONDS)
 	if was_playing_before_drag:
 		player.play()
 	else:
@@ -208,6 +211,7 @@ func _on_slider_value_changed(value: float):
 			last_preview_seek_msec = now
 			player.seek(value)
 			_stop_audio_output()
+			_set_audio_prebuffer(SEEK_AUDIO_PREBUFFER_SECONDS)
 			player.play()
 
 func _update_audio_output():
@@ -236,6 +240,10 @@ func _stop_audio_output():
 	if audio_player:
 		audio_player.stop()
 	audio_playback = null
+
+func _set_audio_prebuffer(seconds: float):
+	var mix_rate = player.get_audio_mix_rate() if player else 48000
+	audio_prebuffer_frames = max(512, int(mix_rate * seconds))
 
 func _on_files_dropped(files: PackedStringArray):
 	if files.is_empty():
