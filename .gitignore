@@ -80,3 +80,4 @@ thirdparty/
 *.dll
 
 build
+docs

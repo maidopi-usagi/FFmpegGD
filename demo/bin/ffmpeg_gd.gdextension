@@ -10,3 +10,8 @@ macos.arm64.release = "./macos/libffmpeg_gd.macos.template_release.arm64.dylib"
 
 windows.x86_64.single.debug = "./windows/ffmpeg_gd.windows.template_debug.x86_64.dll"
 windows.x86_64.single.release = "./windows/ffmpeg_gd.windows.template_release.x86_64.dll"
+
+android.arm64.debug = "./android/libffmpeg_gd.android.template_debug.arm64.so"
+android.arm64.release = "./android/libffmpeg_gd.android.template_release.arm64.so"
+android.x86_64.debug = "./android/libffmpeg_gd.android.template_debug.x86_64.so"
+android.x86_64.release = "./android/libffmpeg_gd.android.template_release.x86_64.so"

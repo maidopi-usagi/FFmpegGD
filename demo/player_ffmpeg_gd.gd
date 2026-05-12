@@ -3,6 +3,7 @@ extends Control
 var player: FFmpegPlayer
 var texture_rect: TextureRect
 var shader_material: ShaderMaterial
+var external_texture_material: ShaderMaterial
 var controls: PanelContainer
 var drop_label: Label
 var file_dialog: FileDialog
@@ -37,8 +38,12 @@ const PREVIEW_SEEK_INTERVAL_MSEC := 120
 const INITIAL_AUDIO_PREBUFFER_SECONDS := 0.20
 const SEEK_AUDIO_PREBUFFER_SECONDS := 0.03
 const SPEED_VALUES := [0.5, 1.0, 1.5, 2.0]
+const ANDROID_TEST_MEDIA_PATH := "/storage/emulated/0/Pictures/15-33-14.mp4"
 
 func _ready():
+	if OS.has_feature("android"):
+		OS.request_permissions()
+
 	player = FFmpegPlayer.new()
 	add_child(player)
 	
@@ -56,7 +61,11 @@ func _ready():
 	shader_material = ShaderMaterial.new()
 	shader_material.shader = load("res://nv12_to_rgb.gdshader")
 	texture_rect.material = shader_material
+	external_texture_material = ShaderMaterial.new()
+	external_texture_material.shader = load("res://external_texture.gdshader")
 	get_window().files_dropped.connect(_on_files_dropped)
+	if OS.has_feature("android"):
+		_load_media(ANDROID_TEST_MEDIA_PATH)
 
 func _process(delta):
 	_update_controls()
@@ -223,6 +232,7 @@ func _create_controls():
 	backend_option.add_item("VideoToolbox")
 	backend_option.add_item("D3D12VA")
 	backend_option.add_item("Vulkan")
+	backend_option.add_item("MediaCodec")
 	backend_option.item_selected.connect(_on_backend_selected)
 	tools_row.add_child(backend_option)
 
@@ -297,7 +307,7 @@ func _on_speed_selected(index: int):
 		audio_player.pitch_scale = speed
 
 func _on_backend_selected(index: int):
-	var backends = ["auto", "software", "videotoolbox", "d3d12va", "vulkan"]
+	var backends = ["auto", "software", "videotoolbox", "d3d12va", "vulkan", "mediacodec"]
 	if index < 0 or index >= backends.size():
 		return
 	player.set_decode_backend(backends[index])
@@ -465,6 +475,17 @@ func _load_media(path: String):
 	_update_stats_label()
 
 func _update_video_texture():
+	var tex_external = player.get_video_texture_external()
+	if tex_external:
+		if drop_label:
+			drop_label.visible = false
+		if texture_rect.material != external_texture_material:
+			texture_rect.material = external_texture_material
+		if texture_rect.texture != tex_external:
+			texture_rect.texture = tex_external
+		external_texture_material.set_shader_parameter("video_texture", tex_external)
+		return
+
 	var tex_rgba = player.get_video_texture_rgba()
 	if tex_rgba:
 		if drop_label:
@@ -578,7 +599,7 @@ func _update_stats_label():
 		codec = "unknown"
 	var frame_rate = player.get_video_frame_rate()
 	var frame_rate_text = "%.2f fps" % frame_rate if frame_rate > 0.0 else "unknown"
-	var upload_path = "GPU RGBA" if player.get_video_texture_rgba() else "YUV shader"
+	var upload_path = "ExternalTexture" if player.get_video_texture_external() else ("GPU RGBA" if player.get_video_texture_rgba() else "YUV shader")
 	stats_label.text = "码率: %s  |  格式: %s  |  解码器: %s  |  编码: %s  |  帧率: %s  |  分辨率: %s  |  实时: %.1f fps / %.3f ms  |  路径: %s" % [bitrate, pixel_format, decoder, codec, frame_rate_text, resolution, player.get_last_video_fps(), player.get_last_upload_ms(), upload_path]
 
 func _format_bitrate(bits_per_second: int) -> String:

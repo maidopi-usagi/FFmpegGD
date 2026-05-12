@@ -57,6 +57,7 @@ FFmpegPlayer::FFmpegPlayer() {
 	texture_uv.instantiate();
 	texture_v.instantiate();
 	texture_rgba.instantiate();
+	texture_external.instantiate();
 	
 	// Get RenderingDevice
 	RenderingServer *rs = RenderingServer::get_singleton();
@@ -91,6 +92,7 @@ void FFmpegPlayer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_video_texture_uv"), &FFmpegPlayer::get_video_texture_uv);
 	ClassDB::bind_method(D_METHOD("get_video_texture_v"), &FFmpegPlayer::get_video_texture_v);
 	ClassDB::bind_method(D_METHOD("get_video_texture_rgba"), &FFmpegPlayer::get_video_texture_rgba);
+	ClassDB::bind_method(D_METHOD("get_video_texture_external"), &FFmpegPlayer::get_video_texture_external);
 	ClassDB::bind_method(D_METHOD("get_video_size"), &FFmpegPlayer::get_video_size);
 	ClassDB::bind_method(D_METHOD("is_yuv420p"), &FFmpegPlayer::is_yuv420p);
 	ClassDB::bind_method(D_METHOD("get_video_codec_name"), &FFmpegPlayer::get_video_codec_name);
@@ -117,6 +119,7 @@ void FFmpegPlayer::cleanup() {
 	release_textures();
 	cleanup_d3d12_resources();
 	cleanup_videotoolbox_resources();
+	cleanup_android_resources();
 	cleanup_vulkan_resources();
 	if (sws_ctx) {
 		sws_freeContext(sws_ctx);
@@ -347,7 +350,12 @@ bool FFmpegPlayer::open_media() {
 		AV_HWDEVICE_TYPE_DXVA2,
 		AV_HWDEVICE_TYPE_CUDA,
 		AV_HWDEVICE_TYPE_VAAPI,
+		AV_HWDEVICE_TYPE_MEDIACODEC,
 		AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
+		AV_HWDEVICE_TYPE_NONE
+	};
+	const enum AVHWDeviceType hw_priority_android[] = {
+		AV_HWDEVICE_TYPE_MEDIACODEC,
 		AV_HWDEVICE_TYPE_NONE
 	};
 	const enum AVHWDeviceType hw_priority_default[] = {
@@ -389,10 +397,15 @@ bool FFmpegPlayer::open_media() {
 		hw_priority = hw_priority_apple_metal;
 	}
 #endif
+#if defined(__ANDROID__)
+	hw_priority = hw_priority_android;
+#endif
 	if (preferred_decode_backend == "software") {
 		hw_priority = hw_priority_software;
 	} else if (preferred_decode_backend == "videotoolbox") {
 		hw_priority = hw_priority_apple_metal;
+	} else if (preferred_decode_backend == "mediacodec") {
+		hw_priority = hw_priority_android;
 	} else if (preferred_decode_backend == "d3d12va") {
 		hw_priority = hw_priority_only_d3d12;
 	} else if (preferred_decode_backend == "vulkan") {
@@ -402,18 +415,18 @@ bool FFmpegPlayer::open_media() {
 		UtilityFunctions::print("Godot rendering driver: ", rendering_driver.is_empty() ? "unknown" : rendering_driver);
 	}
 
-	auto find_hw_config = [&](enum AVHWDeviceType p_type) -> const AVCodecHWConfig * {
+	auto find_hw_config = [&](const AVCodec *p_decoder, enum AVHWDeviceType p_type) -> const AVCodecHWConfig * {
 		for (int i = 0;; i++) {
-			const AVCodecHWConfig *config = avcodec_get_hw_config(decoder, i);
+			const AVCodecHWConfig *config = avcodec_get_hw_config(p_decoder, i);
 			if (!config) return nullptr;
-			if (config->device_type == p_type && (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) {
+			if (config->device_type == p_type && ((config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) || p_type == AV_HWDEVICE_TYPE_MEDIACODEC)) {
 				return config;
 			}
 		}
 	};
 
-	auto try_open_decoder = [&](enum AVHWDeviceType p_type, enum AVPixelFormat p_hw_pix_fmt) -> bool {
-		decoder_ctx = avcodec_alloc_context3(decoder);
+	auto try_open_decoder = [&](const AVCodec *p_decoder, enum AVHWDeviceType p_type, enum AVPixelFormat p_hw_pix_fmt) -> bool {
+		decoder_ctx = avcodec_alloc_context3(p_decoder);
 		if (!decoder_ctx) return false;
 		if (avcodec_parameters_to_context(decoder_ctx, video_stream->codecpar) < 0) {
 			avcodec_free_context(&decoder_ctx);
@@ -442,6 +455,11 @@ bool FFmpegPlayer::open_media() {
 				if (rendering_driver == "metal" && !init_videotoolbox_context()) {
 					UtilityFunctions::print("VideoToolbox will use CPU texture upload because Metal zero-copy import is unavailable.");
 				}
+			} else if (p_type == AV_HWDEVICE_TYPE_MEDIACODEC) {
+				if (!init_android_mediacodec_context(decoder_ctx)) {
+					avcodec_free_context(&decoder_ctx);
+					return false;
+				}
 			} else if (p_type == AV_HWDEVICE_TYPE_VULKAN) {
 				if (!init_vulkan_context()) {
 					avcodec_free_context(&decoder_ctx);
@@ -454,7 +472,7 @@ bool FFmpegPlayer::open_media() {
 			}
 		}
 
-		if (avcodec_open2(decoder_ctx, decoder, nullptr) == 0) {
+		if (avcodec_open2(decoder_ctx, p_decoder, nullptr) == 0) {
 			if (debug_logging && p_type == AV_HWDEVICE_TYPE_NONE) {
 				UtilityFunctions::print("Using software decoding.");
 			} else if (debug_logging) {
@@ -471,19 +489,40 @@ bool FFmpegPlayer::open_media() {
 		if (p_type == AV_HWDEVICE_TYPE_VULKAN) {
 			cleanup_vulkan_resources();
 		}
+		if (p_type == AV_HWDEVICE_TYPE_MEDIACODEC) {
+			cleanup_android_resources();
+		}
 		return false;
 	};
 
 	bool opened = false;
 	for (const enum AVHWDeviceType *type = hw_priority; *type != AV_HWDEVICE_TYPE_NONE; type++) {
-		const AVCodecHWConfig *config = find_hw_config(*type);
-		if (!config) continue;
-		opened = try_open_decoder(*type, config->pix_fmt);
+		const AVCodec *backend_decoder = decoder;
+#if defined(__ANDROID__)
+		if (*type == AV_HWDEVICE_TYPE_MEDIACODEC && decoder && decoder->name) {
+			backend_decoder = avcodec_find_decoder_by_name((String(decoder->name) + "_mediacodec").utf8().get_data());
+			if (!backend_decoder) {
+				UtilityFunctions::print("Android MediaCodec decoder not found for ", decoder->name, ".");
+				continue;
+			}
+			if (debug_logging) {
+				UtilityFunctions::print("Trying Android MediaCodec decoder: ", backend_decoder->name);
+			}
+		}
+#endif
+		const AVCodecHWConfig *config = find_hw_config(backend_decoder, *type);
+		if (!config) {
+			if (debug_logging) {
+				UtilityFunctions::print("No hardware config for ", backend_decoder && backend_decoder->name ? backend_decoder->name : "unknown", " with ", av_hwdevice_get_type_name(*type), ".");
+			}
+			continue;
+		}
+		opened = try_open_decoder(backend_decoder, *type, config->pix_fmt);
 		if (opened) break;
 	}
 
-	if (!opened && preferred_decode_backend != "d3d12va" && preferred_decode_backend != "videotoolbox") {
-		opened = try_open_decoder(AV_HWDEVICE_TYPE_NONE, AV_PIX_FMT_NONE);
+	if (!opened && preferred_decode_backend != "d3d12va" && preferred_decode_backend != "videotoolbox" && preferred_decode_backend != "mediacodec") {
+		opened = try_open_decoder(decoder, AV_HWDEVICE_TYPE_NONE, AV_PIX_FMT_NONE);
 	}
 
 	if (!opened) {
@@ -802,6 +841,11 @@ Ref<Texture2DRD> FFmpegPlayer::get_video_texture_rgba() const {
 	return texture_rgba;
 }
 
+Ref<Texture2D> FFmpegPlayer::get_video_texture_external() const {
+	if (!android_external_texture_ready || texture_external.is_null()) return Ref<Texture2D>();
+	return texture_external;
+}
+
 Vector2i FFmpegPlayer::get_video_size() const {
 	if (decoder_ctx) {
 		return Vector2i(decoder_ctx->width, decoder_ctx->height);
@@ -886,7 +930,7 @@ String FFmpegPlayer::get_decode_backend() const {
 }
 
 void FFmpegPlayer::set_decode_backend(const String &backend) {
-	if (backend == "software" || backend == "videotoolbox" || backend == "d3d12va" || backend == "vulkan") {
+	if (backend == "software" || backend == "videotoolbox" || backend == "d3d12va" || backend == "vulkan" || backend == "mediacodec") {
 		preferred_decode_backend = backend;
 		return;
 	}
@@ -1236,6 +1280,28 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 				}
 #endif
 
+#ifdef FFMPEGGD_HAS_MEDIACODEC
+				if (frame->format == AV_PIX_FMT_MEDIACODEC) {
+					if (debug_logging && !logged_hw_frame_resource) {
+						UtilityFunctions::print("MediaCodec frame ready for Android ExternalTexture: ", frame->width, "x", frame->height);
+						logged_hw_frame_resource = true;
+					}
+					out_frame.width = frame->width;
+					out_frame.height = frame->height;
+					out_frame.colorspace = frame->colorspace;
+					out_frame.color_range = frame->color_range;
+					out_frame.color_transfer = frame->color_trc;
+					out_frame.hdr_source_peak_nits = get_frame_hdr_source_peak_nits(frame);
+					out_frame.pts_seconds = frame_pts_seconds;
+					out_frame.generation = frame_generation;
+					out_frame.hw_frame = av_frame_clone(frame);
+					out_frame.valid = out_frame.hw_frame != nullptr;
+					decoded_frame_count++;
+					av_frame_unref(frame);
+					return out_frame.valid;
+				}
+#endif
+
 #ifdef FFMPEGGD_HAS_VIDEOTOOLBOX
 				if (frame->format == AV_PIX_FMT_VIDEOTOOLBOX && using_godot_metal_device) {
 					if (debug_logging && !logged_videotoolbox_frame_resource) {
@@ -1461,8 +1527,12 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 }
 
 void FFmpegPlayer::upload_frame(const DecodedFrameData &decoded_frame) {
-	if (!rd || !decoded_frame.valid) return;
+	if (!decoded_frame.valid) return;
 	if (decoded_frame.hw_frame) {
+		if (upload_android_mediacodec_frame(decoded_frame.hw_frame)) {
+			return;
+		}
+		if (!rd) return;
 		if (decoded_frame.hw_frame->format == AV_PIX_FMT_VULKAN) {
 			copy_vulkan_image(decoded_frame.hw_frame);
 			return;
@@ -1477,5 +1547,6 @@ void FFmpegPlayer::upload_frame(const DecodedFrameData &decoded_frame) {
 		return;
 	}
 
+	if (!rd) return;
 	upload_cpu_frame(decoded_frame);
 }

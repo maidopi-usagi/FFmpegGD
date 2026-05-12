@@ -131,6 +131,13 @@ func _load_media(path: String):
 	status_label.text = "Playing on 3D mesh: " + path.get_file()
 
 func _update_video_material():
+	var tex_external = player.get_video_texture_external()
+	if tex_external:
+		if screen.material_override != rgba_material:
+			screen.material_override = rgba_material
+		rgba_material.albedo_texture = tex_external
+		return
+
 	var tex_rgba = player.get_video_texture_rgba()
 	if tex_rgba:
 		if screen.material_override != rgba_material:
@@ -163,5 +170,5 @@ func _update_stats():
 	var backend = player.get_video_decoder_backend_name()
 	if backend.is_empty():
 		backend = "unknown"
-	var path = "GPU RGBA" if player.get_video_texture_rgba() else "YUV spatial shader"
+	var path = "ExternalTexture" if player.get_video_texture_external() else ("GPU RGBA" if player.get_video_texture_rgba() else "YUV spatial shader")
 	stats_label.text = "3D video texture | %s | %s | %s | %.1f fps / %.3f ms" % [resolution, backend, path, player.get_last_video_fps(), player.get_last_upload_ms()]

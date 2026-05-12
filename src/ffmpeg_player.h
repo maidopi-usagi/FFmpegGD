@@ -1,6 +1,7 @@
 #pragma once
 
 #include <godot_cpp/classes/node.hpp>
+#include <godot_cpp/classes/external_texture.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/texture2drd.hpp>
@@ -27,6 +28,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/error.h>
 #include <libavutil/hwcontext.h>
 #if (defined(_WIN32) || defined(WIN32)) && __has_include(<libavutil/hwcontext_d3d12va.h>)
 #define FFMPEGGD_HAS_D3D12VA 1
@@ -39,6 +41,11 @@ extern "C" {
 #if defined(FFMPEGGD_HAS_VULKAN_HEADERS) && __has_include(<libavutil/hwcontext_vulkan.h>)
 #define FFMPEGGD_HAS_VULKAN 1
 #include <libavutil/hwcontext_vulkan.h>
+#endif
+#if defined(__ANDROID__) && __has_include(<libavcodec/mediacodec.h>)
+#define FFMPEGGD_HAS_MEDIACODEC 1
+#include <libavcodec/jni.h>
+#include <libavcodec/mediacodec.h>
 #endif
 #include <libavutil/imgutils.h>
 #include <libavutil/mastering_display_metadata.h>
@@ -60,6 +67,7 @@ private:
 	Ref<Texture2DRD> texture_uv; // Used for UV (NV12) or U (YUV420P)
 	Ref<Texture2DRD> texture_v;  // Used for V (YUV420P)
 	Ref<Texture2DRD> texture_rgba;
+	Ref<ExternalTexture> texture_external;
 	RID texture_y_rid;
 	RID texture_uv_rid;
 	RID texture_v_rid;
@@ -106,6 +114,16 @@ private:
 	void *d3d12_compute_pipeline = nullptr;
 	void *cv_metal_texture_cache = nullptr;
 	void *metal_nv12_to_rgba_pipeline = nullptr;
+	void *android_surface_texture = nullptr;
+	void *android_surface = nullptr;
+	void *android_native_surface_texture = nullptr;
+	void *android_hardware_buffer = nullptr;
+	bool android_external_texture_ready = false;
+#ifdef FFMPEGGD_HAS_MEDIACODEC
+	AVMediaCodecContext *android_mediacodec_context = nullptr;
+#else
+	void *android_mediacodec_context = nullptr;
+#endif
 	RID videotoolbox_rgba_rids[3];
 	std::atomic<bool> videotoolbox_rgba_busy[3] = {};
 	int videotoolbox_rgba_index = 0;
@@ -198,6 +216,9 @@ private:
 	bool init_d3d12_copy_resources();
 	bool upload_d3d12_frame(AVFrame *src_frame);
 	bool upload_videotoolbox_frame(AVFrame *src_frame);
+	bool init_android_mediacodec_context(AVCodecContext *ctx);
+	bool upload_android_mediacodec_frame(AVFrame *src_frame);
+	void cleanup_android_resources();
 	bool init_nv12_to_rgba_pipeline();
 	bool dispatch_nv12_to_rgba(int width, int height);
 	void cleanup_d3d12_resources();
@@ -252,6 +273,7 @@ public:
 	Ref<Texture2DRD> get_video_texture_uv() const;
 	Ref<Texture2DRD> get_video_texture_v() const;
 	Ref<Texture2DRD> get_video_texture_rgba() const;
+	Ref<Texture2D> get_video_texture_external() const;
 	Vector2i get_video_size() const;
 	bool is_yuv420p() const;
 	String get_video_codec_name() const;

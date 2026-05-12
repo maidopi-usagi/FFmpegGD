@@ -51,6 +51,7 @@ target_sources(${LIBNAME}
     src/register_types.h
     src/ffmpeg_player_cpu.cpp
     src/ffmpeg_player.cpp
+    src/ffmpeg_player_android.cpp
     src/ffmpeg_player_d3d12.cpp
     src/ffmpeg_player.h
     src/ffmpeg_player_platform_stubs.cpp
@@ -104,6 +105,8 @@ elseif(APPLE)
         "-framework IOSurface"
         "-framework Foundation"
     )
+elseif(ANDROID)
+    target_link_libraries(${LIBNAME} PRIVATE android log mediandk)
 elseif(UNIX)
     target_link_libraries(${LIBNAME} PRIVATE vulkan)
 endif()

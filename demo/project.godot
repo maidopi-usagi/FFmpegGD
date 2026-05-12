@@ -16,6 +16,18 @@ config/features=PackedStringArray("4.6", "Forward Plus")
 boot_splash/show_image=false
 config/icon="res://icon.svg"
 
+[display]
+
+window/stretch/mode="canvas_items"
+
 [dotnet]
 
 project/assembly_name="ffmpeg_gd"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/ffmpeg_gd_android/plugin.cfg")
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true

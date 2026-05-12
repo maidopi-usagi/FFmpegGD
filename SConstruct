@@ -100,6 +100,10 @@ elif env["platform"] == "ios":
     if not ffmpeg_uses_pkg_config:
         env.Append(LIBS=['avcodec', 'avformat', 'avutil', 'swscale', 'swresample'])
     env.Append(FRAMEWORKS=['VideoToolbox', 'CoreVideo', 'CoreMedia', 'Metal', 'IOSurface', 'Foundation'])
+elif env["platform"] == "android":
+    if not ffmpeg_uses_pkg_config:
+        env.Append(LIBS=['avcodec', 'avformat', 'avutil', 'swscale', 'swresample'])
+    env.Append(LIBS=['android', 'log', 'mediandk'])
 
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
