@@ -16,7 +16,7 @@ void FFmpegPlayer::cleanup_videotoolbox_resources() {
 }
 #endif
 
-#if !defined(__linux__)
+#if !defined(__linux__) && !((defined(_WIN32) || defined(WIN32)) && defined(FFMPEGGD_HAS_VULKAN))
 bool FFmpegPlayer::init_vulkan_context() {
 	return false;
 }

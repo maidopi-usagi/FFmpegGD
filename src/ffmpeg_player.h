@@ -67,12 +67,22 @@ private:
 	RID nv12_to_rgba_shader_rid;
 	RID nv12_to_rgba_pipeline_rid;
 	RID nv12_to_rgba_uniform_set_rid;
+	RID yuv_linear_sampler_rid;
 	PackedByteArray upload_y;
 	PackedByteArray upload_u;
 	PackedByteArray upload_v;
 	RenderingDevice *rd = nullptr;
 
 	// Vulkan resources
+#if defined(FFMPEGGD_HAS_VULKAN_HEADERS) || defined(FFMPEGGD_HAS_VULKAN)
+	VkInstance vk_instance = VK_NULL_HANDLE;
+	VkPhysicalDevice vk_phys_device = VK_NULL_HANDLE;
+	VkDevice vk_device = VK_NULL_HANDLE;
+	VkQueue vk_queue = VK_NULL_HANDLE;
+	uint32_t vk_queue_family_index = 0;
+	VkCommandPool vk_command_pool = VK_NULL_HANDLE;
+	VkCommandBuffer vk_command_buffer = VK_NULL_HANDLE;
+#else
 	void *vk_instance = nullptr;
 	void *vk_phys_device = nullptr;
 	void *vk_device = nullptr;
@@ -80,6 +90,7 @@ private:
 	uint32_t vk_queue_family_index = 0;
 	void *vk_command_pool = nullptr;
 	void *vk_command_buffer = nullptr;
+#endif
 	bool using_godot_vulkan_device = false;
 	bool using_godot_d3d12_device = false;
 	bool d3d12_copy_initialized = false;

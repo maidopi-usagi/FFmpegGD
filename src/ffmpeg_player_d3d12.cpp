@@ -4,6 +4,7 @@
 #include <godot_cpp/classes/rd_texture_format.hpp>
 #include <godot_cpp/classes/rd_texture_view.hpp>
 #include <godot_cpp/classes/rd_uniform.hpp>
+#include <godot_cpp/classes/rd_sampler_state.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <cstring>
 
@@ -57,6 +58,10 @@ void FFmpegPlayer::cleanup_d3d12_resources() {
 		if (nv12_to_rgba_uniform_set_rid.is_valid()) {
 			rd->free_rid(nv12_to_rgba_uniform_set_rid);
 			nv12_to_rgba_uniform_set_rid = RID();
+		}
+		if (yuv_linear_sampler_rid.is_valid()) {
+			rd->free_rid(yuv_linear_sampler_rid);
+			yuv_linear_sampler_rid = RID();
 		}
 		if (nv12_to_rgba_pipeline_rid.is_valid()) {
 			rd->free_rid(nv12_to_rgba_pipeline_rid);
@@ -199,7 +204,7 @@ bool FFmpegPlayer::init_d3d12_copy_resources() {
 		"    float u = uv.x - 0.5;\n"
 		"    float v = uv.y - 0.5;\n"
 		"    float yy = 1.1643 * (y - 0.0625);\n"
-		"    float3 rgb = float3(yy + 1.596 * v, yy - 0.391 * u - 0.813 * v, yy + 2.018 * u);\n"
+		"    float3 rgb = float3(yy + 1.5748 * v, yy - 0.187324 * u - 0.468124 * v, yy + 1.8556 * u);\n"
 		"    tex_rgba[id.xy] = float4(saturate(rgb), 1.0);\n"
 		"}\n";
 	ID3DBlob *shader_blob = nullptr;
@@ -267,27 +272,29 @@ bool FFmpegPlayer::init_nv12_to_rgba_pipeline() {
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-layout(r8, set = 0, binding = 0) uniform readonly image2D y_image;
-layout(rg8, set = 0, binding = 1) uniform readonly image2D uv_image;
+layout(set = 0, binding = 0) uniform sampler2D y_image;
+layout(set = 0, binding = 1) uniform sampler2D uv_image;
 layout(rgba8, set = 0, binding = 2) uniform writeonly image2D rgba_image;
 
 void main() {
 	ivec2 xy = ivec2(gl_GlobalInvocationID.xy);
-	ivec2 size = imageSize(y_image);
+	ivec2 size = textureSize(y_image, 0);
 	if (xy.x >= size.x || xy.y >= size.y) {
 		return;
 	}
 
-	float y = imageLoad(y_image, xy).r;
-	vec2 uv = imageLoad(uv_image, xy / 2).rg;
+	vec2 luma_size = vec2(textureSize(y_image, 0));
+	vec2 sample_uv = (vec2(xy) + vec2(0.5)) / luma_size;
+	float y = texelFetch(y_image, xy, 0).r;
+	vec2 uv = texture(uv_image, sample_uv).rg;
 	float u = uv.x - 0.5;
 	float v = uv.y - 0.5;
 
 	float yy = 1.1643 * (y - 0.0625);
 	vec3 rgb = vec3(
-		yy + 1.596 * v,
-		yy - 0.391 * u - 0.813 * v,
-		yy + 2.018 * u
+		yy + 1.5748 * v,
+		yy - 0.187324 * u - 0.468124 * v,
+		yy + 1.8556 * u
 	);
 	imageStore(rgba_image, xy, vec4(clamp(rgb, 0.0, 1.0), 1.0));
 }
@@ -329,17 +336,34 @@ bool FFmpegPlayer::dispatch_nv12_to_rgba(int width, int height) {
 	if (!nv12_to_rgba_uniform_set_rid.is_valid()) {
 		TypedArray<RDUniform> uniforms;
 
+		if (!yuv_linear_sampler_rid.is_valid()) {
+			Ref<RDSamplerState> sampler_state;
+			sampler_state.instantiate();
+			sampler_state->set_min_filter(RenderingDevice::SAMPLER_FILTER_LINEAR);
+			sampler_state->set_mag_filter(RenderingDevice::SAMPLER_FILTER_LINEAR);
+			sampler_state->set_repeat_u(RenderingDevice::SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE);
+			sampler_state->set_repeat_v(RenderingDevice::SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE);
+			sampler_state->set_repeat_w(RenderingDevice::SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE);
+			yuv_linear_sampler_rid = rd->sampler_create(sampler_state);
+			if (!yuv_linear_sampler_rid.is_valid()) {
+				UtilityFunctions::print("Failed to create YUV linear sampler.");
+				return false;
+			}
+		}
+
 		Ref<RDUniform> y_uniform;
 		y_uniform.instantiate();
-		y_uniform->set_uniform_type(RenderingDevice::UNIFORM_TYPE_IMAGE);
+		y_uniform->set_uniform_type(RenderingDevice::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE);
 		y_uniform->set_binding(0);
+		y_uniform->add_id(yuv_linear_sampler_rid);
 		y_uniform->add_id(texture_y_rid);
 		uniforms.push_back(y_uniform);
 
 		Ref<RDUniform> uv_uniform;
 		uv_uniform.instantiate();
-		uv_uniform->set_uniform_type(RenderingDevice::UNIFORM_TYPE_IMAGE);
+		uv_uniform->set_uniform_type(RenderingDevice::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE);
 		uv_uniform->set_binding(1);
+		uv_uniform->add_id(yuv_linear_sampler_rid);
 		uv_uniform->add_id(texture_uv_rid);
 		uniforms.push_back(uv_uniform);
 

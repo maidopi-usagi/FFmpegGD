@@ -2,6 +2,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/rd_texture_format.hpp>
 #include <godot_cpp/classes/rd_texture_view.hpp>
 #include <chrono>
@@ -42,6 +43,11 @@ float get_frame_hdr_source_peak_nits(const AVFrame *frame) {
 		return 1000.0f;
 	}
 	return 0.0f;
+}
+
+bool is_experimental_vulkan_enabled() {
+	OS *os = OS::get_singleton();
+	return os && os->get_environment("FFMPEGGD_EXPERIMENTAL_VULKAN_INLINE_HOOK") == "1";
 }
 
 } // namespace
@@ -204,6 +210,10 @@ void FFmpegPlayer::release_textures() {
 		rd->free_rid(nv12_to_rgba_uniform_set_rid);
 		nv12_to_rgba_uniform_set_rid = RID();
 	}
+	if (yuv_linear_sampler_rid.is_valid()) {
+		rd->free_rid(yuv_linear_sampler_rid);
+		yuv_linear_sampler_rid = RID();
+	}
 	if (texture_y_rid.is_valid()) {
 		rd->free_rid(texture_y_rid);
 		texture_y_rid = RID();
@@ -352,6 +362,16 @@ bool FFmpegPlayer::open_media() {
 		AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
 		AV_HWDEVICE_TYPE_NONE
 	};
+	const enum AVHWDeviceType hw_priority_vulkan[] = {
+		AV_HWDEVICE_TYPE_VULKAN,
+		AV_HWDEVICE_TYPE_D3D11VA,
+		AV_HWDEVICE_TYPE_DXVA2,
+		AV_HWDEVICE_TYPE_NONE
+	};
+	const enum AVHWDeviceType hw_priority_only_vulkan[] = {
+		AV_HWDEVICE_TYPE_VULKAN,
+		AV_HWDEVICE_TYPE_NONE
+	};
 	const enum AVHWDeviceType hw_priority_software[] = {
 		AV_HWDEVICE_TYPE_NONE
 	};
@@ -359,7 +379,11 @@ bool FFmpegPlayer::open_media() {
 		AV_HWDEVICE_TYPE_D3D12VA,
 		AV_HWDEVICE_TYPE_NONE
 	};
+	const bool can_try_experimental_vulkan = is_experimental_vulkan_enabled();
 	const enum AVHWDeviceType *hw_priority = rendering_driver == "d3d12" ? hw_priority_d3d12 : hw_priority_default;
+	if (rendering_driver == "vulkan" && can_try_experimental_vulkan) {
+		hw_priority = hw_priority_vulkan;
+	}
 #if defined(__APPLE__)
 	if (rendering_driver == "metal") {
 		hw_priority = hw_priority_apple_metal;
@@ -371,6 +395,8 @@ bool FFmpegPlayer::open_media() {
 		hw_priority = hw_priority_apple_metal;
 	} else if (preferred_decode_backend == "d3d12va") {
 		hw_priority = hw_priority_only_d3d12;
+	} else if (preferred_decode_backend == "vulkan") {
+		hw_priority = hw_priority_only_vulkan;
 	}
 	if (debug_logging) {
 		UtilityFunctions::print("Godot rendering driver: ", rendering_driver.is_empty() ? "unknown" : rendering_driver);
@@ -860,7 +886,7 @@ String FFmpegPlayer::get_decode_backend() const {
 }
 
 void FFmpegPlayer::set_decode_backend(const String &backend) {
-	if (backend == "software" || backend == "videotoolbox" || backend == "d3d12va") {
+	if (backend == "software" || backend == "videotoolbox" || backend == "d3d12va" || backend == "vulkan") {
 		preferred_decode_backend = backend;
 		return;
 	}
@@ -1161,13 +1187,28 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 				discard_decoded_frames_before = -1.0;
 			}
 				
-			if (frame->format == AV_PIX_FMT_VULKAN) {
-				UtilityFunctions::print("Vulkan decoded frames are not supported by the worker upload path yet.");
-				av_frame_unref(frame);
-				continue;
-			}
-
 	if (frame->format == hw_pix_fmt) {
+#ifdef FFMPEGGD_HAS_VULKAN
+				if (frame->format == AV_PIX_FMT_VULKAN && using_godot_vulkan_device) {
+					if (debug_logging && !logged_hw_frame_resource) {
+						UtilityFunctions::print("Vulkan decoded frame ready for GPU copy: ", frame->width, "x", frame->height);
+						logged_hw_frame_resource = true;
+					}
+					out_frame.width = frame->width;
+					out_frame.height = frame->height;
+					out_frame.colorspace = frame->colorspace;
+					out_frame.color_range = frame->color_range;
+					out_frame.color_transfer = frame->color_trc;
+					out_frame.hdr_source_peak_nits = get_frame_hdr_source_peak_nits(frame);
+					out_frame.pts_seconds = frame_pts_seconds;
+					out_frame.generation = frame_generation;
+					out_frame.hw_frame = av_frame_clone(frame);
+					out_frame.valid = out_frame.hw_frame != nullptr;
+					decoded_frame_count++;
+					av_frame_unref(frame);
+					return out_frame.valid;
+				}
+#endif
 #ifdef FFMPEGGD_HAS_D3D12VA
 				if (debug_logging && !logged_hw_frame_resource && frame->format == AV_PIX_FMT_D3D12) {
 					AVD3D12VAFrame *d3d12_frame = (AVD3D12VAFrame *)frame->data[0];
@@ -1422,6 +1463,10 @@ bool FFmpegPlayer::decode_next_frame(DecodedFrameData &out_frame) {
 void FFmpegPlayer::upload_frame(const DecodedFrameData &decoded_frame) {
 	if (!rd || !decoded_frame.valid) return;
 	if (decoded_frame.hw_frame) {
+		if (decoded_frame.hw_frame->format == AV_PIX_FMT_VULKAN) {
+			copy_vulkan_image(decoded_frame.hw_frame);
+			return;
+		}
 		if (upload_d3d12_frame(decoded_frame.hw_frame)) {
 			return;
 		}

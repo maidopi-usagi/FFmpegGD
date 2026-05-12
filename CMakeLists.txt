@@ -56,7 +56,7 @@ target_sources(${LIBNAME}
     src/ffmpeg_player_platform_stubs.cpp
 )
 
-if(UNIX AND NOT APPLE)
+if((UNIX AND NOT APPLE) OR WIN32)
     target_sources(${LIBNAME}
         PRIVATE
         src/ffmpeg_player_vulkan.cpp

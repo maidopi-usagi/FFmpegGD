@@ -47,6 +47,7 @@ ffmpeg_path = env.get("ffmpeg_path", "")
 ffmpeg_dlls = []
 ffmpeg_uses_pkg_config = False
 if ffmpeg_path:
+    ffmpeg_path = os.path.abspath(ffmpeg_path)
     ffmpeg_include = os.path.join(ffmpeg_path, "include")
     ffmpeg_lib = os.path.join(ffmpeg_path, "lib")
     if not os.path.isdir(ffmpeg_include) or not os.path.isdir(ffmpeg_lib):
@@ -102,8 +103,8 @@ elif env["platform"] == "ios":
 
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
-if env["platform"] != "linux":
-    sources = [source for source in sources if str(source) != "src/ffmpeg_player_vulkan.cpp"]
+if env["platform"] not in ["linux", "windows"]:
+    sources = [source for source in sources if os.path.basename(str(source)) != "ffmpeg_player_vulkan.cpp"]
 if env["platform"] in ["macos", "ios"]:
     sources += Glob("src/*.mm")
 

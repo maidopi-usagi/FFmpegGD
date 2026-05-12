@@ -222,6 +222,7 @@ func _create_controls():
 	backend_option.add_item("Software")
 	backend_option.add_item("VideoToolbox")
 	backend_option.add_item("D3D12VA")
+	backend_option.add_item("Vulkan")
 	backend_option.item_selected.connect(_on_backend_selected)
 	tools_row.add_child(backend_option)
 
@@ -296,7 +297,7 @@ func _on_speed_selected(index: int):
 		audio_player.pitch_scale = speed
 
 func _on_backend_selected(index: int):
-	var backends = ["auto", "software", "videotoolbox", "d3d12va"]
+	var backends = ["auto", "software", "videotoolbox", "d3d12va", "vulkan"]
 	if index < 0 or index >= backends.size():
 		return
 	player.set_decode_backend(backends[index])
