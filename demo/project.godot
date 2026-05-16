@@ -16,6 +16,10 @@ config/features=PackedStringArray("4.6", "Forward Plus")
 boot_splash/show_image=false
 config/icon="res://icon.svg"
 
+[audio]
+
+general/ios/session_category=3
+
 [display]
 
 window/stretch/mode="canvas_items"

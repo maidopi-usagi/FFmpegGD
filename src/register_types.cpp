@@ -4,6 +4,9 @@
 #include <godot_cpp/godot.hpp>
 
 #include "ffmpeg_player.h"
+#ifdef FFMPEGGD_HAS_IOS_DOCUMENT_PICKER
+#include "ios_document_picker.h"
+#endif
 #include "vulkan_device_hook.h"
 
 using namespace godot;
@@ -18,6 +21,9 @@ void initialize_gdextension_types(ModuleInitializationLevel p_level)
 		return;
 	}
 	GDREGISTER_CLASS(FFmpegPlayer);
+#ifdef FFMPEGGD_HAS_IOS_DOCUMENT_PICKER
+	GDREGISTER_CLASS(IOSDocumentPicker);
+#endif
 }
 
 void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {

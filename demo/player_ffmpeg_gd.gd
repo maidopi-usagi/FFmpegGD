@@ -24,6 +24,8 @@ var mute_check: CheckBox
 var subtitle_button: Button
 var subtitle_dialog: FileDialog
 var subtitle_label: Label
+var ios_ui_font: Font
+var ios_document_picker: Object
 var audio_player: AudioStreamPlayer
 var audio_playback: AudioStreamGeneratorPlayback
 var audio_prebuffer_frames := 0
@@ -57,6 +59,8 @@ func _ready():
 	_create_controls()
 	_create_file_dialog()
 	_create_subtitle_dialog()
+	_create_ios_document_picker()
+	_apply_ios_system_font()
 	
 	shader_material = ShaderMaterial.new()
 	shader_material.shader = load("res://nv12_to_rgb.gdshader")
@@ -137,6 +141,54 @@ func _create_subtitle_dialog():
 	subtitle_dialog.filters = PackedStringArray(["*.srt ; SubRip subtitles"])
 	subtitle_dialog.file_selected.connect(_load_subtitle_file)
 	add_child(subtitle_dialog)
+
+func _create_ios_document_picker():
+	if not OS.has_feature("ios"):
+		return
+	if not ClassDB.class_exists("IOSDocumentPicker"):
+		return
+	ios_document_picker = ClassDB.instantiate("IOSDocumentPicker")
+	ios_document_picker.file_selected.connect(_on_ios_media_file_selected)
+	ios_document_picker.canceled.connect(_on_ios_document_picker_canceled)
+
+func _apply_ios_system_font():
+	if not OS.has_feature("ios"):
+		return
+	ios_ui_font = _load_ios_system_font()
+	if not ios_ui_font:
+		return
+	_apply_font_override_recursive(self, ios_ui_font)
+
+func _load_ios_system_font() -> Font:
+	var font_paths := PackedStringArray()
+	for sample in ["Hello", "你好", "こんにちは"]:
+		for path in OS.get_system_font_path_for_text("sans-serif", sample):
+			if not font_paths.has(path):
+				font_paths.append(path)
+	if font_paths.is_empty():
+		var default_path := OS.get_system_font_path("sans-serif")
+		if not default_path.is_empty():
+			font_paths.append(default_path)
+
+	var fonts: Array[Font] = []
+	for path in font_paths:
+		var font_file := FontFile.new()
+		if font_file.load_dynamic_font(path) == OK and not font_file.data.is_empty():
+			fonts.append(font_file)
+	if fonts.is_empty():
+		return null
+
+	var fallback_fonts: Array[Font] = []
+	for index in range(1, fonts.size()):
+		fallback_fonts.append(fonts[index])
+	fonts[0].fallbacks = fallback_fonts
+	return fonts[0]
+
+func _apply_font_override_recursive(node: Node, font: Font):
+	if node is Control:
+		(node as Control).add_theme_font_override("font", font)
+	for child in node.get_children():
+		_apply_font_override_recursive(child, font)
 
 func _create_controls():
 	controls = PanelContainer.new()
@@ -293,7 +345,18 @@ func _on_play_button_pressed():
 		player.play()
 
 func _on_open_button_pressed():
+	if ios_document_picker:
+		status_label.text = "Opening iOS file picker..."
+		ios_document_picker.open_media()
+		return
 	file_dialog.popup_centered_ratio(0.8)
+
+func _on_ios_media_file_selected(path: String):
+	_load_media(path)
+
+func _on_ios_document_picker_canceled():
+	if not media_loaded:
+		status_label.text = "No file loaded"
 
 func _on_debug_toggled(enabled: bool):
 	player.set_debug_logging(enabled)

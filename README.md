@@ -1,85 +1,129 @@
 # ffmpeg_gd
 
-Godot GDExtension video player backed by FFmpeg, aims at high effciency hardware replay support for available plaforms without CPU rounding.
+Godot FFmpeg GDExtension video player. Focus: hardware decode and low-copy display where platform allows it.
 
-## Platform Status
+
+## Status
 
 | Platform | Backend | Status |
 | --- | --- | --- |
-| macOS arm64 | VideoToolbox + Metal | Supported. GPU decode with no CPU pixel readback; NV12->RGBA conversion runs on Metal. |
-| Windows x86_64 | D3D12VA | D3D12 supported. Vulkan lacks external memory suppport. |
-| Android arm64 | MediaCodec + Vulkan copy or GLES ExternalTexture | Supported through the Godot Android plugin path. Vulkan can hardware-decode but needs a copy/upload path; GLES Compatibility can use `SurfaceTexture` + `ExternalTexture` for the zero-copy display path. |
-| Linux | TBD | Not shipped yet. |
-| iOS / Web | TBD | Not shipped yet. |
+| Windows x86_64 | D3D12VA | Builds. D3D12 path exists. |
+| macOS arm64 | VideoToolbox + Metal | Builds and runs. |
+| iOS arm64 | VideoToolbox + Metal | Builds. Native file picker path included. |
+| Android arm64 | MediaCodec + GLES `ExternalTexture` | Builds. GLES path is zero-copy display; Vulkan still needs copy/upload. |
+| Linux | Vulkan / software | Builds, lightly tested. |
+| Web | - | Not supported. |
 
-## Build
+## Common
 
-Use a system or user-provided FFmpeg development install. The build does not download FFmpeg automatically because FFmpeg's effective license depends on the way that FFmpeg binary was configured.
+Use SCons for normal builds. Provide FFmpeg root with `include/` and `lib/`.
 
 ```shell
-scons platform=macos target=template_debug arch=arm64 ffmpeg_path="/opt/homebrew/opt/ffmpeg"
+scons platform=macos target=template_debug arch=arm64 ffmpeg_path="/path/to/ffmpeg"
 ```
 
-If `ffmpeg_path` is omitted, SCons tries `pkg-config`:
+If `ffmpeg_path` is omitted, SCons tries `pkg-config`.
 
 ```shell
 scons platform=linux target=template_debug
 ```
 
-`ffmpeg_path` must point at a directory containing `include/` and `lib/`.
+GDExtension config: `demo/bin/ffmpeg_gd.gdextension`.
 
-For CMake, use the equivalent `FFMPEG_ROOT` cache variable or omit it to use `pkg-config`:
+## macOS
 
 ```shell
-cmake -S . -B cmake-build -DFFMPEG_ROOT=/opt/homebrew/opt/ffmpeg
+scons platform=macos target=template_debug arch=arm64 ffmpeg_path="/opt/homebrew/opt/ffmpeg"
 ```
 
-On Windows, FFmpeg runtime DLLs are not copied by default. To explicitly bundle them for a local demo/package:
+Output:
 
-```shell
-scons platform=windows target=template_debug ffmpeg_path="C:/path/to/ffmpeg" ffmpeg_bundle_runtime=yes
+```text
+demo/bin/macos/libffmpeg_gd.macos.template_debug.arm64.dylib
 ```
 
-Only enable runtime bundling after verifying the selected FFmpeg build's license and redistribution requirements.
+## iOS
 
-The extension config lives at `demo/bin/ffmpeg_gd.gdextension` and uses the `ffmpeg_gd_library_init` entry symbol.
-
-### Android
-
-Android debug exports use `demo/export_presets.cfg`, Godot's Gradle export, and the plugin in `demo/addons/ffmpeg_gd_android`. The plugin AAR loads `libffmpeg.so` and `libffmpeg_gd.android.template_debug.arm64.so` from Java so `JNI_OnLoad` can register the Java VM with FFmpeg before the GDExtension initializes MediaCodec.
-
-The AAR is prebuilt in this repository. You do not need to rebuild the plugin with Gradle for a normal export; rebuild or repack the AAR only after changing Java code, AAR assets, or bundled native libraries. Godot's Android export still needs Gradle because Android Plugin v2 AARs are packaged by Gradle export; pure non-Gradle APK export is not the documented path for v2 plugins.
-
-For Android rendering, Vulkan/Forward+ can still use MediaCodec hardware decode, but stock Godot 4.6 cannot expose the decoded image as a Vulkan `ExternalTexture` yet, so that route needs a copy/upload path. GLES Compatibility returns a valid `ExternalTexture` ID for `android.graphics.SurfaceTexture`, which enables the pure hardware display path.
-
-Typical debug build/deploy flow:
+Prepare iOS FFmpeg root first.
 
 ```shell
-ANDROID_HOME= ANDROID_SDK_ROOT= ANDROID_NDK_ROOT="/Users/opi/Library/Android/sdk/ndk/28.1.13356709" \
+scons platform=ios target=template_debug arch=arm64 ffmpeg_path="/path/to/ffmpeg-ios-root"
+```
+
+Create XCFramework used by Godot export:
+
+```shell
+rm -rf demo/bin/ios/libffmpeg_gd.ios.template_debug.xcframework
+xcodebuild -create-xcframework \
+  -library demo/bin/ios/libffmpeg_gd.ios.template_debug.arm64.dylib \
+  -output demo/bin/ios/libffmpeg_gd.ios.template_debug.xcframework
+```
+
+Optional: generate Xcode project from Godot preset:
+
+```shell
+mkdir -p demo/build/ios
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path demo --export-debug iOS build/ios/ffmpeg_gd.xcodeproj
+```
+
+Optional: compile generated Xcode project:
+
+```shell
+xcodebuild -project demo/build/ios/ffmpeg_gd.xcodeproj \
+  -scheme ffmpeg_gd \
+  -configuration Debug \
+  -destination 'generic/platform=iOS' \
+  build
+```
+
+## Android
+
+Arm64 only. Uses Godot Android Plugin v2 AAR.
+
+```shell
+ANDROID_HOME= ANDROID_SDK_ROOT= ANDROID_NDK_ROOT="/path/to/android-ndk" \
   scons platform=android target=template_debug arch=arm64 android_api_level=26 \
   ffmpeg_path="/path/to/android/ffmpeg-root"
+```
 
+Repack AAR after native rebuild:
+
+```shell
 cp demo/bin/android/libffmpeg_gd.android.template_debug.arm64.so \
   android_plugin/build/aar/jni/arm64-v8a/libffmpeg_gd.android.template_debug.arm64.so
 
 (cd android_plugin/build/aar && rm -f ../../../demo/addons/ffmpeg_gd_android/ffmpeg_gd_android.aar && \
   zip -r ../../../demo/addons/ffmpeg_gd_android/ffmpeg_gd_android.aar .)
-
-godot --headless --path demo --export-debug Android build/android/ffmpeg_gd-debug.apk
-adb install -r demo/build/android/ffmpeg_gd-debug.apk
 ```
 
-The export destination is relative to the Godot project path, so `build/android/ffmpeg_gd-debug.apk` is written under `demo/build/android/` from the repository root.
+## Windows
 
-The demo requests shared-storage media permissions and auto-opens `/storage/emulated/0/Pictures/15-33-14.mp4` on Android for device testing.
+```shell
+scons platform=windows target=template_debug arch=x86_64 ffmpeg_path="C:/path/to/ffmpeg"
+```
 
-## Demo
+Bundle FFmpeg DLLs into demo output:
 
-Open the `demo` project in Godot and run the main scene.
+```shell
+scons platform=windows target=template_debug arch=x86_64 ffmpeg_path="C:/path/to/ffmpeg" ffmpeg_bundle_runtime=yes
+```
 
-The demo supports drag-and-drop playback and an `Open` button. Enable the `Debug` checkbox to print FFmpeg/player diagnostics.
+## Linux
 
-On Android, the GLES external texture path is drawn with `demo/external_texture.gdshader`, which uses `samplerExternalOES`. Enable the Debug checkbox when you need verbose decoder/backend logs such as `Using hardware acceleration: mediacodec`.
+```shell
+scons platform=linux target=template_debug arch=x86_64
+# or
+scons platform=linux target=template_debug arch=x86_64 ffmpeg_path="/path/to/ffmpeg"
+```
+
+## CMake
+
+Desktop fallback path. SCons is preferred.
+
+```shell
+cmake -S . -B cmake-build -DFFMPEG_ROOT="/path/to/ffmpeg"
+cmake --build cmake-build
+```
 
 ## License
 

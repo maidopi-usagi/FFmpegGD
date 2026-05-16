@@ -1,0 +1,5 @@
+[gd_resource type="SystemFont" format=3 uid="uid://ccqsah6hqy5dv"]
+
+[resource]
+font_names = PackedStringArray("PingFang SC", "Hiragino Sans", "Hiragino Kaku Gothic ProN", ".AppleSystemUIFont", "Helvetica Neue", "sans-serif")
+allow_system_fallback = true

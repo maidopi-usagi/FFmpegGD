@@ -95,11 +95,12 @@ elif env["platform"] == "linux":
 elif env["platform"] == "macos":
     if not ffmpeg_uses_pkg_config:
         env.Append(LIBS=['avcodec', 'avformat', 'avutil', 'swscale', 'swresample'])
-    env.Append(FRAMEWORKS=['VideoToolbox', 'CoreVideo', 'CoreMedia', 'Metal', 'IOSurface', 'Foundation'])
+    env.Append(LINKFLAGS=['-framework', 'VideoToolbox', '-framework', 'CoreVideo', '-framework', 'CoreMedia', '-framework', 'Metal', '-framework', 'IOSurface', '-framework', 'Foundation', '-framework', 'CoreFoundation', '-framework', 'QuartzCore', '-lobjc'])
 elif env["platform"] == "ios":
     if not ffmpeg_uses_pkg_config:
         env.Append(LIBS=['avcodec', 'avformat', 'avutil', 'swscale', 'swresample'])
-    env.Append(FRAMEWORKS=['VideoToolbox', 'CoreVideo', 'CoreMedia', 'Metal', 'IOSurface', 'Foundation'])
+    env.Append(CPPDEFINES=['FFMPEGGD_HAS_IOS_DOCUMENT_PICKER'])
+    env.Append(LINKFLAGS=['-framework', 'VideoToolbox', '-framework', 'CoreVideo', '-framework', 'CoreMedia', '-framework', 'Metal', '-framework', 'IOSurface', '-framework', 'Foundation', '-framework', 'CoreFoundation', '-framework', 'QuartzCore', '-framework', 'UIKit', '-framework', 'UniformTypeIdentifiers', '-lobjc'])
 elif env["platform"] == "android":
     if not ffmpeg_uses_pkg_config:
         env.Append(LIBS=['avcodec', 'avformat', 'avutil', 'swscale', 'swresample'])
@@ -109,7 +110,9 @@ env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
 if env["platform"] not in ["linux", "windows"]:
     sources = [source for source in sources if os.path.basename(str(source)) != "ffmpeg_player_vulkan.cpp"]
-if env["platform"] in ["macos", "ios"]:
+if env["platform"] == "macos":
+    sources += ["src/ffmpeg_player_videotoolbox.mm"]
+elif env["platform"] == "ios":
     sources += Glob("src/*.mm")
 
 if env["target"] in ["editor", "template_debug"]:

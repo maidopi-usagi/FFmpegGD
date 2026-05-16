@@ -15,3 +15,6 @@ android.arm64.debug = "./android/libffmpeg_gd.android.template_debug.arm64.so"
 android.arm64.release = "./android/libffmpeg_gd.android.template_release.arm64.so"
 android.x86_64.debug = "./android/libffmpeg_gd.android.template_debug.x86_64.so"
 android.x86_64.release = "./android/libffmpeg_gd.android.template_release.x86_64.so"
+
+ios.debug = "./ios/libffmpeg_gd.ios.template_debug.xcframework"
+ios.release = "./ios/libffmpeg_gd.ios.template_release.xcframework"
