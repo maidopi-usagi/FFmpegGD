@@ -5,13 +5,15 @@ Godot FFmpeg GDExtension video player. Focus: hardware decode and low-copy displ
 
 ## Status
 
-| Platform | Backend | Status |
-| --- | --- | --- |
-| Windows x86_64 | D3D12VA | Builds. D3D12 path exists. |
-| macOS arm64 | VideoToolbox + Metal | Builds and runs. |
-| iOS arm64 | VideoToolbox + Metal | Builds. Native file picker path included. |
-| Android arm64 | MediaCodec + GLES `ExternalTexture` | Builds. GLES path is zero-copy display; Vulkan still needs copy/upload. |
-| Linux | Vulkan / software | Builds, lightly tested. |
+| Platform | Backend | Status | 0 copy
+| --- | --- | --- | --- |
+| Windows x64 D3D12 | D3D12VA | Builds. | Yes |
+| Windows x64 Vulkan| VkVideoCodec | Builds. | Yes(Hooked) |
+| macOS arm64 | VideoToolbox + Metal | Builds. | Yes |
+| iOS arm64 | VideoToolbox + Metal | Builds. | Yes |
+| Android arm64 GLES| MediaCodec | Builds. | Yes |
+| Android arm64 Vulkan| MediaCodec | Builds. | HW Decode but needs copy planes. |
+| Linux | Vulkan | Builds, lightly tested. |
 | Web | - | Not supported. |
 
 ## Common
